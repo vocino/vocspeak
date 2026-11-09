@@ -1,0 +1,9 @@
+package-as: VocSpeak
+
+ignore:
+  - .agents
+  - .github
+  - .luacheckrc
+  - .wowluarc.json
+  - tests
+  - AGENTS.md

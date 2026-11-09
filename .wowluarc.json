@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TradeSkillMaster/wowlua-ls/main/editors/vscode/wowluarc.schema.json",
+  "addonRoot": true,
+  "flavors": [
+    "forever"
+  ],
+  "ignore": [
+    ".reference/**"
+  ],
+  "globals": {
+    "read": [
+      "_G",
+      "C_ChatInfo",
+      "CreateFrame",
+      "CreateSettingsListSectionHeaderInitializer",
+      "GameTooltip",
+      "PlaySound",
+      "SOUNDKIT",
+      "Settings",
+      "SettingsPanel", "UnitRace"
+    ],
+    "write": [
+      "VocSpeakDB",
+      "SLASH_VOCSPEAK1",
+      "SLASH_VOCSPEAK2",
+      "SlashCmdList",
+      "VocSpeak_CompartmentClick",
+      "VocSpeak_CompartmentEnter",
+      "VocSpeak_CompartmentLeave"
+    ]
+  }
+}
