@@ -1,16 +1,58 @@
 local name, ns = ...
 
--- VocSpeak: roleplay speaking for the Forever client. Outgoing /say
--- and /yell pass through a wrapper on the documented send call
--- (C_ChatInfo.SendChatMessage, the only outgoing route on the
--- Forever branch: Blizzard's own edit box calls it directly, and the
--- bare SendChatMessage global only exists behind the
--- loadDeprecationFallbacks shim), which rewrites the line in a
--- dwarven or troll dialect before it crosses. Emotes never change,
--- and a (( prefix marks out-of-character and stays as typed.
+-- VocSpeak: roleplay speaking for Forever and Midnight (retail).
+-- Outgoing /say and /yell pass through a wrapper on the documented
+-- send call (C_ChatInfo.SendChatMessage, documented identically on
+-- the live and forever branches: the edit box calls it directly),
+-- which rewrites the line in a dwarven or troll dialect before it
+-- crosses. Emotes never change, and a (( prefix marks
+-- out-of-character and stays as typed.
 
 VocSpeakDB = VocSpeakDB or {}
 ns.db = VocSpeakDB
+
+-- Client flavor. The client loads exactly one of our tocs (the 1.x
+-- VocSpeak_Camelot.toc on Forever, the 12.x VocSpeak.toc on
+-- retail), so reading our own loaded Interface version back is
+-- literally asking what we're loaded into. Below 20000 is our
+-- classic-lineage toc; anything else keeps retail behavior, which is
+-- today's behavior everywhere, including flavors we ship no toc for
+-- (those clients fall back to the plain toc). A missing API falls
+-- back to retail, never an error. C_AddOns.GetAddOnInterfaceVersion
+-- is documented on the live and forever branches.
+function ns.clientFlavor()
+  if type(C_AddOns) == "table" and type(C_AddOns.GetAddOnInterfaceVersion) == "function" then
+    local ok, v = pcall(C_AddOns.GetAddOnInterfaceVersion, name)
+    if ok and type(v) == "number" and v < 20000 then
+      return "forever"
+    end
+  end
+  return "retail"
+end
+
+-- Secret values (Midnight): a refused read errors on compare and
+-- arithmetic in addon code. canaccessvalue gates every such read
+-- before it is touched; a missing API means no secrets exist there.
+function ns.isSecret(v)
+  if type(canaccessvalue) == "function" then
+    local ok, accessible = pcall(canaccessvalue, v)
+    if ok and accessible == false then
+      return true
+    end
+  end
+  return false
+end
+
+-- Busy window: combat lockdown. A missing API never reads as busy.
+function ns.inCombat()
+  if type(InCombatLockdown) == "function" then
+    local ok, locked = pcall(InCombatLockdown)
+    if ok and locked then
+      return true
+    end
+  end
+  return false
+end
 
 -- Chat voice shared by every Voc addon: one line, the addon name as
 -- a colored prefix, then the message. A chat line is a fact or a
@@ -145,6 +187,11 @@ end
 -- /say and /yell reach the engine; every other type passes through
 -- untouched. A (( prefix marks out-of-character and stays as typed.
 function speak.MangleForSend(message, chatType, target)
+  -- Secret values (Midnight) fail open to the untouched line, never
+  -- an error and never a mangled secret.
+  if ns.isSecret(message) or ns.isSecret(chatType) or ns.isSecret(target) then
+    return message
+  end
   if message == nil then
     message = ""
   end
@@ -296,6 +343,9 @@ function speak.DialectForRace(race)
   if type(race) ~= "string" then
     return nil
   end
+  if ns.isSecret(race) then
+    return nil
+  end
   return speak.RACE_DIALECTS[race:lower()]
 end
 
@@ -311,6 +361,14 @@ function speak.ApplyRaceDefault()
   if not ok then
     return nil
   end
+  -- Data not loaded yet reads nil; a refused (secret) return reads
+  -- as no voice, never an error.
+  if ns.isSecret(raceName) then
+    raceName = nil
+  end
+  if ns.isSecret(raceFile) then
+    raceFile = nil
+  end
   local dialect = speak.DialectForRace(raceFile) or speak.DialectForRace(raceName)
   if dialect == nil then
     return nil
@@ -323,6 +381,10 @@ end
 -- uninstalling it; anything outside 0-10 is a typo and prints help
 -- instead.
 function speak.SetChance(raw)
+  if ns.isSecret(raw) then
+    ns.help()
+    return
+  end
   local chance = tonumber(raw)
   if chance == nil or chance < 0 or chance > 10 or chance ~= math.floor(chance) then
     ns.help()
@@ -441,6 +503,12 @@ function ns.ensureSettings()
 end
 
 function ns.openConfig()
+  -- Opening the panel is a protected act in combat: stay silent on
+  -- the panel and name the way back instead, never error.
+  if ns.inCombat() then
+    ns.say("open Settings > AddOns > VocSpeak")
+    return
+  end
   local ok = ns.settingsCategory ~= nil
     and pcall(function()
       Settings.OpenToCategory(ns.settingsCategory:GetID())
@@ -455,6 +523,10 @@ end
 -- gold title, one line naming the job, one muted line teaching the
 -- slash command.
 function VocSpeak_CompartmentClick(_, _)
+  -- Combat lockdown: clicks no-op, silent, and work again after.
+  if ns.inCombat() then
+    return
+  end
   ns.play("open")
   speak.ToggleEnabled()
 end
@@ -509,6 +581,11 @@ end
 SLASH_VOCSPEAK1 = "/vs"
 SLASH_VOCSPEAK2 = "/vocspeak"
 SlashCmdList.VOCSPEAK = function(msg)
+  -- A refused (secret) slash argument never errors: print help.
+  if ns.isSecret(msg) then
+    ns.help()
+    return
+  end
   local text = (msg or ""):lower()
   local cmd, arg = text:match("^(%S*)%s*(.-)%s*$")
   if cmd == "" then
@@ -533,9 +610,27 @@ SlashCmdList.VOCSPEAK = function(msg)
   end
 end
 
+-- Character identity for ENTERING_WORLD: a GUID distinguishes a
+-- character switch (reapply the racial voice) from a zone load on
+-- the same character (keep the player's choice). A missing GUID
+-- (data not loaded yet) never counts as a switch.
+ns.identity = nil
+
+local function readIdentity()
+  if type(UnitGUID) ~= "function" then
+    return nil
+  end
+  local ok, guid = pcall(UnitGUID, "player")
+  if ok and type(guid) == "string" then
+    return guid
+  end
+  return nil
+end
+
 local boot = CreateFrame("Frame")
 boot:RegisterEvent("ADDON_LOADED")
 boot:RegisterEvent("PLAYER_LOGIN")
+boot:RegisterEvent("PLAYER_ENTERING_WORLD")
 boot:SetScript("OnEvent", function(_, event, addon)
   if event == "ADDON_LOADED" then
     if addon ~= name then
@@ -555,7 +650,32 @@ boot:SetScript("OnEvent", function(_, event, addon)
     boot:UnregisterEvent("ADDON_LOADED")
   elseif event == "PLAYER_LOGIN" then
     speak.ApplyRaceDefault()
+    -- Data not loaded yet: the send call or Settings may appear
+    -- after load, so retry both here.
+    if speak.IsAvailable() then
+      speak.ApplyEnabled()
+    end
     ns.ensureSettings() -- in case the Settings API was not up at ADDON_LOADED
     boot:UnregisterEvent("PLAYER_LOGIN")
+  elseif event == "PLAYER_ENTERING_WORLD" then
+    ns.db = VocSpeakDB or ns.db
+    ns.opts()
+    if speak.IsAvailable() then
+      speak.ApplyEnabled()
+    end
+    ns.ensureSettings()
+    local id = readIdentity()
+    local switched = id ~= nil and id ~= ns.identity
+    if switched then
+      if id ~= nil then
+        ns.identity = id
+      end
+      -- New character, first login, or waking on a new toon: the
+      -- racial voice restores. Zone loads on the same character keep
+      -- history and keep the player's choice.
+      speak.ApplyRaceDefault()
+    elseif id ~= nil and ns.identity == nil then
+      ns.identity = id
+    end
   end
 end)

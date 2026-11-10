@@ -2,6 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/TradeSkillMaster/wowlua-ls/main/editors/vscode/wowluarc.schema.json",
   "addonRoot": true,
   "flavors": [
+    "retail",
     "forever"
   ],
   "ignore": [
@@ -10,14 +11,19 @@
   "globals": {
     "read": [
       "_G",
+      "C_AddOns",
       "C_ChatInfo",
       "CreateFrame",
       "CreateSettingsListSectionHeaderInitializer",
       "GameTooltip",
+      "InCombatLockdown",
       "PlaySound",
       "SOUNDKIT",
       "Settings",
-      "SettingsPanel", "UnitRace"
+      "SettingsPanel",
+      "UnitGUID",
+      "UnitRace",
+      "canaccessvalue"
     ],
     "write": [
       "VocSpeakDB",

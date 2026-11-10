@@ -4,6 +4,7 @@ ignore:
   - .agents
   - .github
   - .luacheckrc
+  - .reference
   - .wowluarc.json
   - tests
   - AGENTS.md

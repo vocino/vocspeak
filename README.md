@@ -1,10 +1,11 @@
 # VocSpeak
 
-Roleplay speaking for World of Warcraft: Forever. Outgoing `/say`
-and `/yell` are rewritten in a dwarven or troll dialect before they
-send, through a wrapper on the documented send call
-(`C_ChatInfo.SendChatMessage`). Emotes never change, and a `((`
-prefix marks out-of-character and stays as typed.
+Roleplay speaking for World of Warcraft: Forever and Midnight
+(retail). Outgoing `/say` and `/yell` are rewritten in a dwarven or
+troll dialect before they send, through a wrapper on the documented
+send call (`C_ChatInfo.SendChatMessage`, documented on both
+branches). Emotes never change, and a `((` prefix marks
+out-of-character and stays as typed.
 
 Graduated from VocUI's chat module: the same engine, the same two
 dialect tables (rebuilt in the Ironforge and Darkspear registers
@@ -29,17 +30,18 @@ dialect, the chance slider, and the channel checkboxes.
 
 ## What this is not
 
-- Not a retail addon. Forever only, like the VocUI module it
-  graduated from.
 - Not a chat frame. It rewrites what you send; it never touches how
   chat looks, and replacement chat frames need no integration.
 
 ## Status
 
-The headless suite (`lua tests/run.lua`) pins the engine, the gate,
-the hook, the slash, and the panel. `luacheck .` and
-`stylua --check .` pass.
+The headless suite (`lua tests/run.lua`, 162 checks) pins the engine,
+the gate, the hook, the slash, the panel, and the robustness contract:
+Forever + Midnight flavor reads, data-not-loaded retries, secret
+fail-open, combat no-op and recovery, login/reload/saved-data,
+character/zone/group handling. `luacheck .` and `stylua --check .`
+pass.
 
 ---
 
-Built for Forever, for one player, by vocino.
+Built for Forever and Midnight, for one player, by vocino.

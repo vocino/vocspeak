@@ -1,12 +1,14 @@
--- Lint config for VocSpeak (Forever client, Lua 5.1). read_globals is
--- the allowlist of WoW API verified against the Forever build in
--- `## Interface:`; lint fails on any other global on purpose: add a
--- name here only after confirming it exists, under that namespace, in
--- the Forever build. Never from a wiki.
+-- Lint config for VocSpeak (Forever + retail, Lua 5.1). read_globals is
+-- the allowlist of WoW API verified against both branches in
+-- `## Interface:` (Blizzard_APIDocumentationGenerated for live and
+-- forever, see .reference/api-verification.md); lint fails on any
+-- other global on purpose: add a name here only after confirming it
+-- exists, under that namespace, in both builds. Never from a wiki.
 std = "lua51"
 max_line_length = false
 self = false
 unused_args = false
+exclude_files = { ".reference/**" }
 
 -- Globals this addon owns: the SavedVariable, slash registration,
 -- and the addon compartment entry points named in the .toc.
@@ -20,12 +22,15 @@ globals = {
 -- WoW API and UI globals read by the addon. Every entry is
 -- presence-gated at the call site; a missing API is never an error.
 read_globals = {
-  "C_ChatInfo",
+  "C_AddOns", -- GetAddOnInterfaceVersion: own-toc flavor check (live + forever)
+  "C_ChatInfo", -- SendChatMessage: the send wrapper (live + forever)
   "CreateFrame",
   "CreateSettingsListSectionHeaderInitializer",
   "GameTooltip",
+  "InCombatLockdown", -- combat gate for clicks and the panel (live + forever)
   "PlaySound", "SOUNDKIT",
-  "Settings", "SettingsPanel", "UnitRace",
+  "Settings", "SettingsPanel", "UnitGUID", "UnitRace",
+  "canaccessvalue", -- secret guard (live + forever)
 }
 
 -- The send wrapper writes C_ChatInfo.SendChatMessage; the write is the
@@ -39,5 +44,5 @@ files["main.lua"] = {
 files["tests/**"] = {
   std = "max",
   globals = { "print", "_G" },
-  read_globals = { "os" },
+  read_globals = { "os", "setfenv", "loadstring", "unpack" },
 }

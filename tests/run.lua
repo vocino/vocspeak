@@ -1,46 +1,238 @@
--- Headless tests for VocSpeak. No game client needed.
--- Run from the repo root:  lua tests/run.lua
+-- VocSpeak headless tests. Stub-harness: no WoW client needed.
+-- Run from anywhere:  lua tests/run.lua   (repo root also fine)
+-- Works on Lua 5.1 (the client's dialect) and 5.2+.
+--
+-- Convention (from VocXP): each test builds a fresh stub world, drives
+-- the boot frame's OnEvent scripts or the slash handler, and asserts.
+-- Any failed assert aborts with the test name. The addon files load in
+-- toc order (main.lua, Dialect.lua, Dictionaries.lua) into an isolated
+-- env per test, so no state leaks between tests.
 
-local mock = dofile("tests/mock.lua")
-mock.install()
+local testDir = debug.getinfo(1, "S").source:gsub("\\", "/"):match("@?(.*/)") or ""
+local mainPath = testDir .. "../main.lua"
+local dialectPath = testDir .. "../Dialect.lua"
+local dictsPath = testDir .. "../Dictionaries.lua"
 
-local pass, fail = 0, 0
+local passed = 0
 local function check(name, cond)
-  if cond then
-    pass = pass + 1
-  else
-    fail = fail + 1
-    print("FAIL " .. name)
+  if not cond then
+    error("FAIL: " .. name, 2)
   end
+  passed = passed + 1
 end
 
-local FILES = {
-  "main.lua",
-  "Dialect.lua",
-  "Dictionaries.lua",
-}
+-- Fresh stub world per test. Fields mirror the client surface VocSpeak
+-- reads: chat send, race/guid, secrets, combat, toc version, settings,
+-- tooltip, sounds, frames, slash.
+local function newWorld()
+  return {
+    raceName = "Dwarf",
+    raceFile = "Dwarf",
+    guid = "Player-11-0001",
+    inCombat = false,
+    secretStamps = {},
+    secretGuard = true,
+    addonInterfaceVersion = 120105,
+    queriedAddon = nil,
+    withSettings = false,
+    settingsReg = {},
+    settingCallbacks = {},
+    settingsChecks = 0,
+    printed = {},
+    sounds = {},
+    frames = {},
+    savedVars = nil,
+    chatSent = {},
+    gametip = { lines = {} },
+  }
+end
 
--- Loads the whole addon into one namespace, in toc order, as the client does.
-local function loadAddon()
-  mock.reset()
-  local ns = {}
-  for _, file in ipairs(FILES) do
-    assert(loadfile(file))("VocSpeak", ns)
+-- Loads the whole addon into an isolated env for one world, in toc
+-- order, as the client does. Returns ns; stashes env/frame on world.
+local function loadAddon(w)
+  local g = {}
+  for k, v in pairs(_G) do
+    g[k] = v
+  end -- inherit stdlib
+  g._G = g
+  g.print = function(...)
+    local parts = {}
+    for i = 1, select("#", ...) do
+      parts[#parts + 1] = tostring(select(i, ...))
+    end
+    w.printed[#w.printed + 1] = table.concat(parts, " ")
   end
+  if w.secretGuard ~= false then
+    g.canaccessvalue = function(v)
+      return w.secretStamps[v] ~= true
+    end
+  end
+  g.InCombatLockdown = function()
+    return w.inCombat
+  end
+  g.C_AddOns = {
+    GetAddOnInterfaceVersion = function(n)
+      w.queriedAddon = n
+      return w.addonInterfaceVersion
+    end,
+  }
+  if w.raceMissing then
+    g.UnitRace = nil
+  else
+    g.UnitRace = function()
+      if w.raceErrors then
+        error("race unavailable")
+      end
+      return w.raceName, w.raceFile
+    end
+  end
+  if w.guidMissing then
+    g.UnitGUID = nil
+  else
+    g.UnitGUID = function()
+      if w.guidErrors then
+        error("guid unavailable")
+      end
+      return w.guid
+    end
+  end
+  local originalSend = function(message, chatType, languageID, target)
+    w.chatSent = { message = message, chatType = chatType, languageID = languageID, target = target }
+  end
+  g.C_ChatInfo = { SendChatMessage = originalSend }
+  w.originalSend = originalSend
+  g.PlaySound = function(id)
+    w.sounds[#w.sounds + 1] = id
+  end
+  g.GameTooltip = {
+    SetOwner = function(_, owner, anchor)
+      w.gametip.owner, w.gametip.anchor = owner, anchor
+    end,
+    SetText = function(_, t, r, gg, b)
+      w.gametip.title = t
+      w.gametip.titleColor = { r, gg, b }
+    end,
+    AddLine = function(_, t, r, gg, b)
+      w.gametip.lines[#w.gametip.lines + 1] = { text = t, r = r, g = gg, b = b }
+    end,
+    Show = function()
+      w.gametip.shown = true
+    end,
+    Hide = function()
+      w.gametip.shown = false
+    end,
+  }
+  if w.withSettings then
+    local S = {}
+    S.RegisterVerticalLayoutCategory = function(n)
+      w.settingsCat = n
+      return {
+        GetID = function()
+          return 42
+        end,
+      }
+    end
+    S.RegisterAddOnCategory = function()
+      w.settingsCatRegistered = true
+    end
+    S.RegisterAddOnSetting = function(_, var, key, tbl, typ, label, default)
+      w.settingsReg[#w.settingsReg + 1] =
+        { var = var, key = key, tbl = tbl, type = typ, label = label, default = default }
+      local s = {}
+      s.SetValueChangedCallback = function(_, fn)
+        w.settingCallbacks[var] = fn
+      end
+      return s
+    end
+    S.CreateCheckbox = function()
+      w.settingsChecks = w.settingsChecks + 1
+    end
+    S.CreateSlider = function()
+      w.settingsChecks = w.settingsChecks + 1
+    end
+    S.CreateSliderOptions = function(minValue, maxValue, step)
+      return { minValue = minValue, maxValue = maxValue, step = step }
+    end
+    S.CreateDropdown = function(_, _, options)
+      w.dropdownOptions = options
+      return {}
+    end
+    S.CreateControlTextContainer = function()
+      local data = {}
+      return {
+        Add = function(_, v, label)
+          data[#data + 1] = { value = v, label = label }
+        end,
+        GetData = function()
+          return data
+        end,
+      }
+    end
+    S.OpenToCategory = function(id)
+      w.openedCategory = id
+    end
+    g.Settings = S
+    g.SettingsPanel = {
+      GetLayout = function()
+        return {
+          AddInitializer = function(_, init)
+            w.headers = w.headers or {}
+            w.headers[#w.headers + 1] = init
+          end,
+        }
+      end,
+    }
+    g.CreateSettingsListSectionHeaderInitializer = function(text)
+      return text
+    end
+  end
+  g.CreateFrame = function()
+    local f = { events = {}, scripts = {} }
+    function f:RegisterEvent(e)
+      self.events[e] = true
+    end
+    function f:UnregisterEvent(e)
+      self.events[e] = nil
+    end
+    function f:SetScript(s, fn)
+      self.scripts[s] = fn
+    end
+    w.frames[#w.frames + 1] = f
+    return f
+  end
+  g.SlashCmdList = {}
+  g.VocSpeakDB = nil -- client hasn't restored SavedVariables at file-exec time
+  g.UIParent = {}
+  local function loadInto(path)
+    local f = assert(io.open(path, "r"))
+    local src = f:read("*a")
+    f:close()
+    local chunk
+    if setfenv then
+      chunk = assert(loadstring(src, "@" .. path))
+      setfenv(chunk, g)
+    else
+      chunk = assert(load(src, "@" .. path, "t", g))
+    end
+    return chunk
+  end
+  local ns = {}
+  loadInto(mainPath)("VocSpeak", ns)
+  loadInto(dialectPath)("VocSpeak", ns)
+  loadInto(dictsPath)("VocSpeak", ns)
+  w.frame = w.frames[1] -- the boot frame, created at load
+  w.ns = ns
+  w.env = g
   return ns
 end
 
--- Runs fn with print captured; print is restored even when fn errors.
-local function capturePrint(fn)
-  local lines = {}
-  local realPrint = print
-  print = function(s)
-    lines[#lines + 1] = s
-  end
-  local ok, err = pcall(fn)
-  print = realPrint
-  assert(ok, err)
-  return lines
+-- Simulate the client deserializing SavedVariables (a FRESH table
+-- replaces the file-top default) and then firing the login sequence.
+local function clientLoaded(w)
+  w.env.VocSpeakDB = w.savedVars or {}
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_LOGIN")
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
 end
 
 -- Deterministic randomness for dialect tests: variant picks take the
@@ -57,43 +249,41 @@ local function stubRandom(speak)
   end
 end
 
--- Chat voice: the colored prefix carries the addon name, no trailing period
+-- 1. Chat voice: the colored prefix carries the addon name, no trailing period
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   check("chat prefix color", ns.PREFIX_COLOR == "ff66ccff")
-  local said = capturePrint(function()
-    ns.say("hello")
-  end)
-  check("say prefixes the addon name", said[1] == "|c" .. ns.PREFIX_COLOR .. "VocSpeak|r: hello")
+  ns.say("hello")
+  check("say prefixes the addon name", w.printed[1] == "|c" .. ns.PREFIX_COLOR .. "VocSpeak|r: hello")
 end
 
--- Sounds: SOUNDKIT names first, numeric fallback, silent without an API
+-- 2. Sounds: SOUNDKIT names first, numeric fallback, silent without an API
 do
-  local ns = loadAddon()
-  local played = {}
-  _G.PlaySound = function(id)
-    played[#played + 1] = id
-  end
-  _G.SOUNDKIT = nil
+  local w = newWorld()
+  local ns = loadAddon(w)
+  w.env.SOUNDKIT = nil
   ns.play("open")
   ns.play("off")
-  _G.SOUNDKIT = { IG_MAINMENU_OPEN = 1850 }
+  w.env.SOUNDKIT = { IG_MAINMENU_OPEN = 1850 }
   ns.play("open")
   ns.play("bogus")
-  check("sound fallback then SOUNDKIT name", table.concat(played, ",") == "850,857,1850")
-  _G.PlaySound = nil
+  check("sound fallback then SOUNDKIT name", table.concat(w.sounds, ",") == "850,857,1850")
+  w.env.PlaySound = nil
   ns.play("open") -- no sound API: silent, never an error
-  check("no sound API is silent", #played == 3)
-  _G.SOUNDKIT = nil
+  check("no sound API is silent", #w.sounds == 3)
+  w.env.SOUNDKIT = nil
   check("unknown kind never errors", pcall(ns.play, "bogus") == true)
 end
 
--- State: flat VocSpeakDB, defaults fill once, wrong types reset
+-- 3. State: flat VocSpeakDB, defaults fill once, wrong types reset
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
   local o = ns.opts()
   check("defaults speak dwarven at chance 8", o.enabled == true and o.dialect == "dwarf" and o.chance == 8)
-  check("state lives in VocSpeakDB", ns.db == _G.VocSpeakDB and ns.db.say == true and ns.db.yell == true)
+  check("state lives in VocSpeakDB", ns.db == w.env.VocSpeakDB and ns.db.say == true and ns.db.yell == true)
   ns.db.chance = "loud"
   ns.db.extra = "kept"
   local refilled = ns.opts()
@@ -101,9 +291,10 @@ do
   check("unknown keys are left alone", refilled.extra == "kept")
 end
 
--- Slash help: family grammar, config second to last, long form named
+-- 4. Slash help: family grammar, config second to last, long form named
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   check(
     "help lines keep config second to last",
     ns.HELP[#ns.HELP - 1]:find("/vs config", 1, true) ~= nil
@@ -112,9 +303,10 @@ do
   )
 end
 
--- Options: present in panel order
+-- 5. Options: present in panel order
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   local keys = {}
   for _, row in ipairs(ns.speak.OPTIONS) do
     if type(row.key) == "string" then
@@ -124,9 +316,10 @@ do
   check("options present in panel order", table.concat(keys, ",") == "enabled,dialect,chance,say,yell")
 end
 
--- Engine: dwarven word rewrites at full chance
+-- 6. Engine: dwarven word rewrites at full chance
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   local speak = ns.speak
   stubRandom(speak)
   local dwarf = speak.DICTIONARIES.dwarf
@@ -139,9 +332,10 @@ do
   check("troll greets", speak.Mangle("hello yes man", troll, 10) == "'ello yah, mon mon")
 end
 
--- Engine: flavor markers thin out below chance 10
+-- 7. Engine: flavor markers thin out below chance 10
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   local speak = ns.speak
   stubRandom(speak)
   local dwarf = speak.DICTIONARIES.dwarf
@@ -152,9 +346,10 @@ do
   check("the boundary roll still applies", speak.Mangle("hello there", dwarf, 8) == "G'day ther'")
 end
 
--- Engine: hyperlinks shelter and come back byte-identical
+-- 8. Engine: hyperlinks shelter and come back byte-identical
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   local speak = ns.speak
   stubRandom(speak)
   local dwarf, troll = speak.DICTIONARIES.dwarf, speak.DICTIONARIES.troll
@@ -163,8 +358,6 @@ do
     speak.Mangle("hello |cffffff00|Hitem:12345|h[Thunderfury]|h|r today", dwarf, 10)
       == "G'day |cffffff00|Hitem:12345|h[Thunderfury]|h|r today"
   )
-  -- The apostrophe guard skips ^-anchored rules after an', so that
-  -- stays untouched there: no loose rule reads it through.
   check(
     "two links survive with mangling between",
     speak.Mangle("say this |c1|h[A]|h|r and that |c2|h[B]|h|r now", troll, 10)
@@ -172,10 +365,11 @@ do
   )
 end
 
--- Gate: toggles, types, channels, and the (( hatch
+-- 9. Gate: toggles, types, channels, and the (( hatch
 do
-  local ns = loadAddon()
-  ns.db = {}
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
   local speak = ns.speak
   stubRandom(speak)
   check("say mangles", speak.MangleForSend("hello", "SAY") == "G'day")
@@ -211,268 +405,160 @@ do
   check("junk input crosses untouched", speak.MangleForSend(42, "SAY") == 42)
 end
 
--- Hook: the wrapper mangles in place and restores on disable
+-- 10. Hook: the wrapper mangles in place and restores on disable
 do
-  local sent = {}
-  local original = function(message, chatType, languageID, target)
-    sent = { message = message, chatType = chatType, languageID = languageID, target = target }
-  end
-  _G.C_ChatInfo = { SendChatMessage = original }
-  local ns = loadAddon()
-  ns.db = {}
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
   local speak = ns.speak
   stubRandom(speak)
-  ns.say = function() end
-  ns.play = function() end
-  check("send wrapper installs", speak.HookSend() == true and _G.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
-  _G.C_ChatInfo.SendChatMessage("hello", "SAY", 1, nil)
+  check("send wrapper installs", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
+  w.env.C_ChatInfo.SendChatMessage("hello", "SAY", 1, nil)
   check(
     "wrapper mangles and passes args through",
-    sent.message == "G'day" and sent.chatType == "SAY" and sent.languageID == 1 and sent.target == nil
+    w.chatSent.message == "G'day"
+      and w.chatSent.chatType == "SAY"
+      and w.chatSent.languageID == 1
+      and w.chatSent.target == nil
   )
   local brokenGate = speak.MangleForSend
   speak.MangleForSend = function()
     error("boom")
   end
-  _G.C_ChatInfo.SendChatMessage("hello", "SAY")
-  check("a mangling error fails open", sent.message == "hello")
+  w.env.C_ChatInfo.SendChatMessage("hello", "SAY")
+  check("a mangling error fails open", w.chatSent.message == "hello")
   speak.MangleForSend = brokenGate
   speak.SetEnabled(false)
-  check("disable restores the saved call", _G.C_ChatInfo.SendChatMessage == original)
+  check("disable restores the saved call", w.env.C_ChatInfo.SendChatMessage == w.originalSend)
   speak.SetEnabled(true)
-  check("re-enable rewraps", _G.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
-  _G.C_ChatInfo = nil
+  check("re-enable rewraps", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
+  w.env.C_ChatInfo = nil
   check("hook declines without the api", speak.HookSend() == false)
   check("disable without the api stays silent", pcall(speak.ApplyEnabled) == true)
 end
 
--- Slash: dialect, chance, and channel subcommands on /vs
+-- 11. Slash: dialect, chance, and channel subcommands on /vs
 do
-  _G.C_ChatInfo = {
-    SendChatMessage = function() end,
-  }
-  local ns = loadAddon()
-  ns.db = {}
+  local w = newWorld()
+  w.withSettings = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
   local speak = ns.speak
   stubRandom(speak)
-  local said, played = {}, {}
-  ns.say = function(msg)
-    said[#said + 1] = msg
-  end
-  ns.play = function(kind)
-    played[#played + 1] = kind
-  end
-  _G.SlashCmdList.VOCSPEAK("troll")
+  w.env.SlashCmdList.VOCSPEAK("troll")
   check(
     "slash sets the dialect with sound",
-    ns.opts().dialect == "troll" and played[#played] == "on" and said[#said] == "dialect troll"
+    ns.opts().dialect == "troll"
+      and w.sounds[#w.sounds] == 856
+      and w.printed[#w.printed]:find("dialect troll", 1, true) ~= nil
   )
-  _G.SlashCmdList.VOCSPEAK("chance 3")
+  w.env.SlashCmdList.VOCSPEAK("chance 3")
   check(
     "slash sets the chance with sound",
-    ns.opts().chance == 3 and played[#played] == "on" and said[#said] == "chance 3"
+    ns.opts().chance == 3 and w.sounds[#w.sounds] == 856 and w.printed[#w.printed] == "|cff66ccffVocSpeak|r: chance 3"
   )
   local before = ns.opts().chance
-  local saidBefore = #said
-  local printed = capturePrint(function()
-    _G.SlashCmdList.VOCSPEAK("chance 11")
-  end)
-  check(
-    "out-of-range chance only prints help",
-    ns.opts().chance == before and #printed == #ns.HELP and #said == saidBefore + 1
-  )
-  _G.SlashCmdList.VOCSPEAK("toggle say")
+  local printedBefore = #w.printed
+  w.env.SlashCmdList.VOCSPEAK("chance 11")
+  check("out-of-range chance only prints help", ns.opts().chance == before and #w.printed >= printedBefore + #ns.HELP)
+  w.env.SlashCmdList.VOCSPEAK("toggle say")
   check(
     "slash flips a channel with sound",
-    ns.opts().say == false and played[#played] == "off" and said[#said] == "say channel off"
+    ns.opts().say == false
+      and w.sounds[#w.sounds] == 857
+      and w.printed[#w.printed]:find("say channel off", 1, true) ~= nil
   )
-  saidBefore = #said
-  printed = capturePrint(function()
-    _G.SlashCmdList.VOCSPEAK("toggle general")
-  end)
+  printedBefore = #w.printed
+  w.env.SlashCmdList.VOCSPEAK("toggle general")
   check(
     "general is no longer a channel",
-    ns.opts().general == nil and ns.opts().say == false and #printed == #ns.HELP and #said == saidBefore + 1
+    ns.opts().general == nil and ns.opts().say == false and #w.printed >= printedBefore + #ns.HELP
   )
-  _G.SlashCmdList.VOCSPEAK("toggle list")
-  check("toggle list names every channel", said[#said]:find("channels say off", 1, true) ~= nil)
+  w.env.SlashCmdList.VOCSPEAK("toggle list")
+  check("toggle list names every channel", w.printed[#w.printed]:find("channels say off", 1, true) ~= nil)
   before = ns.opts().say
-  saidBefore = #said
-  printed = capturePrint(function()
-    _G.SlashCmdList.VOCSPEAK("toggle bogus")
-  end)
-  check(
-    "unknown channels only print help",
-    ns.opts().say == before and #printed == #ns.HELP and #said == saidBefore + 1
-  )
-  _G.SlashCmdList.VOCSPEAK("")
+  printedBefore = #w.printed
+  w.env.SlashCmdList.VOCSPEAK("toggle bogus")
+  check("unknown channels only print help", ns.opts().say == before and #w.printed >= printedBefore + #ns.HELP)
+  w.env.SlashCmdList.VOCSPEAK("")
   check(
     "bare slash toggles the filter",
-    ns.opts().enabled == false and played[#played] == "off" and _G.C_ChatInfo.SendChatMessage ~= speak.SendChatMessage
+    ns.opts().enabled == false
+      and w.sounds[#w.sounds] == 857
+      and w.env.C_ChatInfo.SendChatMessage ~= speak.SendChatMessage
   )
-  _G.SlashCmdList.VOCSPEAK("on")
-  check("slash turns the filter on", ns.opts().enabled == true and played[#played] == "on")
-  saidBefore = #said
-  printed = capturePrint(function()
-    _G.SlashCmdList.VOCSPEAK("bogus")
-  end)
-  check(
-    "unknown subcommands only print help",
-    ns.opts().enabled == true and #printed == #ns.HELP and #said == saidBefore + 1
-  )
-  _G.SlashCmdList.VOCSPEAK("config")
-  check("config plays the open sound", played[#played] == "open")
-  _G.C_ChatInfo = nil
+  w.env.SlashCmdList.VOCSPEAK("on")
+  check("slash turns the filter on", ns.opts().enabled == true and w.sounds[#w.sounds] == 856)
+  printedBefore = #w.printed
+  w.env.SlashCmdList.VOCSPEAK("bogus")
+  check("unknown subcommands only print help", ns.opts().enabled == true and #w.printed >= printedBefore + #ns.HELP)
+  w.env.SlashCmdList.VOCSPEAK("config")
+  check("config plays the open sound", w.sounds[#w.sounds] == 850)
 end
 
--- Settings: one category for the addon, rows in order, live toggle
+-- 12. Settings: one category for the addon, rows in order, live toggle
 do
-  _G.C_ChatInfo = {
-    SendChatMessage = function() end,
-  }
-  local registered, headers, categoryName = {}, {}, nil
-  local dropdownInit
-  _G.Settings = {
-    RegisterVerticalLayoutCategory = function(n)
-      categoryName = n
-      return {
-        name = n,
-        GetID = function()
-          return 7
-        end,
-      }
-    end,
-    RegisterAddOnCategory = function() end,
-    OpenToCategory = function() end,
-    RegisterAddOnSetting = function(page, variable, key, tbl, vtype, label, default)
-      local s = { page = page, variable = variable, key = key }
-      s.SetValueChangedCallback = function(_, fn)
-        s.callback = fn
-      end
-      registered[#registered + 1] = s
-      return s
-    end,
-    CreateCheckbox = function(_, s)
-      return { setting = s }
-    end,
-    CreateSlider = function(_, s, options)
-      return { setting = s, options = options }
-    end,
-    CreateSliderOptions = function(minValue, maxValue, step)
-      return { minValue = minValue, maxValue = maxValue, step = step }
-    end,
-    CreateDropdown = function(_, s, options)
-      dropdownInit = { setting = s, options = options }
-      return dropdownInit
-    end,
-    CreateControlTextContainer = function()
-      local data = {}
-      return {
-        Add = function(_, v, label)
-          data[#data + 1] = { value = v, label = label }
-        end,
-        GetData = function()
-          return data
-        end,
-      }
-    end,
-  }
-  _G.SettingsPanel = {
-    GetLayout = function()
-      return {
-        AddInitializer = function(_, init)
-          headers[#headers + 1] = init
-        end,
-      }
-    end,
-  }
-  _G.CreateSettingsListSectionHeaderInitializer = function(text)
-    return text
-  end
-  local ns = loadAddon()
-  ns.db = {}
-  ns.ensureSettings()
+  local w = newWorld()
+  w.withSettings = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
   local speak = ns.speak
-  check("panel builds one category for the addon", categoryName == "VocSpeak")
+  check("panel builds one category for the addon", w.settingsCat == "VocSpeak")
   local keys = {}
-  for _, s in ipairs(registered) do
+  for _, s in ipairs(w.settingsReg) do
     keys[#keys + 1] = s.key
   end
   check("panel registers the rows in order", table.concat(keys, ",") == "enabled,dialect,chance,say,yell")
   check(
     "panel leads with the job and the escape hatch",
-    headers[1] == "Rewrites outgoing /say and /yell in a dwarven or troll dialect before it sends"
-      and headers[2] == "Only /say and /yell change; (( lines and emotes never do"
-      and headers[3] == "Dialect"
-      and headers[4] == "Channels"
+    w.headers[1] == "Rewrites outgoing /say and /yell in a dwarven or troll dialect before it sends"
+      and w.headers[2] == "Only /say and /yell change; (( lines and emotes never do"
+      and w.headers[3] == "Dialect"
+      and w.headers[4] == "Channels"
   )
-  local dropdown
-  for _, s in ipairs(registered) do
-    if s.key == "dialect" then
-      dropdown = s
-    end
-  end
-  check("dialect row exists", dropdown ~= nil)
-  local picked = dropdownInit ~= nil and dropdownInit.options() or {}
+  local picked = w.dropdownOptions and w.dropdownOptions() or {}
   check(
-    "dialect dropdown offers dwarven and troll",
+    "dialect row offers dwarven and troll",
     #picked == 2 and picked[1].value == "dwarf" and picked[2].value == "troll"
   )
-  local enabledSetting
-  for _, s in ipairs(registered) do
-    if s.key == "enabled" then
-      enabledSetting = s
-    end
-  end
+  local enabledCb = w.settingCallbacks["VocSpeak_enabled"]
+  check("panel toggle callback exists", type(enabledCb) == "function")
   speak.HookSend()
   ns.db.enabled = false
-  enabledSetting.callback()
-  check("panel toggle removes the wrapper", _G.C_ChatInfo.SendChatMessage ~= speak.SendChatMessage)
+  enabledCb()
+  check("panel toggle removes the wrapper", w.env.C_ChatInfo.SendChatMessage ~= speak.SendChatMessage)
   ns.db.enabled = true
-  enabledSetting.callback()
-  check("panel toggle reinstalls the wrapper", _G.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
-  ns.ensureSettings()
-  check("settings build once", categoryName == "VocSpeak")
-  _G.Settings, _G.SettingsPanel, _G.CreateSettingsListSectionHeaderInitializer = nil, nil, nil
-  _G.C_ChatInfo = nil
+  enabledCb()
+  check("panel toggle reinstalls the wrapper", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
+  local built = w.settingsCat
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
+  check("settings build once", w.settingsCat == built)
 end
 
--- Boot and compartment: login fills defaults and hooks, clicks toggle
+-- 13. Boot and compartment: login fills defaults and hooks, clicks toggle
 do
-  _G.C_ChatInfo = {
-    SendChatMessage = function() end,
-  }
-  local ns = loadAddon()
-  ns.db = {}
+  local w = newWorld()
+  local ns = loadAddon(w)
   local speak = ns.speak
   stubRandom(speak)
-  ns.say = function() end
-  ns.play = function() end
-  local boot
-  for _, frame in ipairs(mock.frames) do
-    if frame.events["ADDON_LOADED"] then
-      boot = frame
-    end
-  end
-  check("boot frame registers for login", boot ~= nil)
-  boot.scripts.OnEvent(boot, "ADDON_LOADED", "someone-else")
-  check("other addons never boot us", ns.db.enabled == nil)
-  boot.scripts.OnEvent(boot, "ADDON_LOADED", "VocSpeak")
+  check("boot frame registers for login", w.frame.events["ADDON_LOADED"] and w.frame.events["PLAYER_LOGIN"])
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "someone-else")
+  check("other addons never boot us", ns.db == nil or ns.db.enabled == nil)
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
   check("login fills the defaults", ns.opts().enabled == true and ns.opts().dialect == "dwarf")
-  check("login installs the wrapper", _G.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
-  VocSpeak_CompartmentClick()
+  check("login installs the wrapper", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
+  w.env.VocSpeak_CompartmentClick()
   check("compartment click toggles off", ns.opts().enabled == false)
-  VocSpeak_CompartmentClick()
+  w.env.VocSpeak_CompartmentClick()
   check("compartment click toggles on", ns.opts().enabled == true)
-  check("tooltip enter without a tooltip stays silent", pcall(VocSpeak_CompartmentEnter) == true)
-  check("tooltip leave without a tooltip stays silent", pcall(VocSpeak_CompartmentLeave) == true)
-  _G.C_ChatInfo = nil
+  check("tooltip enter without a tooltip stays silent", pcall(w.env.VocSpeak_CompartmentEnter) == true)
+  check("tooltip leave without a tooltip stays silent", pcall(w.env.VocSpeak_CompartmentLeave) == true)
 end
 
--- Engine: rebuilt voice vectors (chance 10, first variant)
+-- 14. Engine: rebuilt voice vectors (chance 10, first variant)
 do
-  local ns = loadAddon()
-  ns.db = {}
+  local w = newWorld()
+  local ns = loadAddon(w)
   local speak = ns.speak
   stubRandom(speak)
   local dwarf, troll = speak.DICTIONARIES.dwarf, speak.DICTIONARIES.troll
@@ -510,62 +596,42 @@ do
   end
 end
 
--- Race: the dialect follows the player's race on login
+-- 15. Race: the dialect follows the player's race on login
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   local speak = ns.speak
   check("dwarf race maps to dwarven", speak.DialectForRace("Dwarf") == "dwarf")
   check("troll race maps to troll", speak.DialectForRace("Troll") == "troll")
   check("unmapped races keep their voice", speak.DialectForRace("Human") == nil and speak.DialectForRace(nil) == nil)
-  ns.db = {}
-  _G.UnitRace = function()
-    return "Troll", "Troll"
-  end
+  clientLoaded(w)
+  w.raceName, w.raceFile = "Troll", "Troll"
   check("troll login speaks troll", speak.ApplyRaceDefault() == "troll" and ns.opts().dialect == "troll")
-  _G.UnitRace = function()
-    return "Dwarf", "Dwarf"
-  end
+  w.raceName, w.raceFile = "Dwarf", "Dwarf"
   ns.opts().dialect = "troll"
   check("dwarf login speaks dwarven", speak.ApplyRaceDefault() == "dwarf" and ns.opts().dialect == "dwarf")
-  _G.UnitRace = function()
-    return "Human", "Human"
-  end
+  w.raceName, w.raceFile = "Human", "Human"
   ns.opts().dialect = "troll"
   check("unmapped races leave the dialect alone", speak.ApplyRaceDefault() == nil and ns.opts().dialect == "troll")
-  _G.UnitRace = nil
+  w.raceMissing = true
+  w.env.UnitRace = nil
   ns.db = {}
   check("missing race api keeps the default", speak.ApplyRaceDefault() == nil and ns.opts().dialect == "dwarf")
 end
 
--- Boot: login restores the racial voice
+-- 16. Boot: login restores the racial voice
 do
-  _G.C_ChatInfo = {
-    SendChatMessage = function() end,
-  }
-  local ns = loadAddon()
-  ns.db = {}
-  ns.say = function() end
-  ns.play = function() end
-  _G.UnitRace = function()
-    return "Troll", "Troll"
-  end
-  local boot
-  for _, frame in ipairs(mock.frames) do
-    if frame.events["ADDON_LOADED"] then
-      boot = frame
-    end
-  end
-  boot.scripts.OnEvent(boot, "ADDON_LOADED", "VocSpeak")
-  check("addon loaded still defaults dwarven before login", ns.opts().dialect == "dwarf")
-  boot.scripts.OnEvent(boot, "PLAYER_LOGIN")
+  local w = newWorld()
+  w.raceName, w.raceFile = "Troll", "Troll"
+  local ns = loadAddon(w)
+  clientLoaded(w)
   check("login switches a troll to troll", ns.opts().dialect == "troll")
-  _G.UnitRace = nil
-  _G.C_ChatInfo = nil
 end
 
--- Troll voice: restrained, lore-grounded conversions
+-- 17. Troll voice: restrained, lore-grounded conversions
 do
-  local ns = loadAddon()
+  local w = newWorld()
+  local ns = loadAddon(w)
   local speak = ns.speak
   stubRandom(speak)
   local troll = speak.DICTIONARIES.troll
@@ -588,5 +654,313 @@ do
   check("flavor-held forms apply on the boundary", speak.Mangle("those i'm and", troll, 8) == "dose i be an'")
 end
 
-print(string.format("%d passed, %d failed", pass, fail))
-os.exit(fail > 0 and 1 or 0)
+-- 18. Forever + Midnight (retail today): own toc, nothing assumed
+do -- the shipped Midnight Interface version reads retail
+  local w = newWorld()
+  w.addonInterfaceVersion = 120105
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("midnight flavor", ns.clientFlavor() == "retail")
+  check("midnight queries own addon", w.queriedAddon == "VocSpeak")
+end
+do -- the Forever Interface version reads forever
+  local w = newWorld()
+  w.addonInterfaceVersion = 16001
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("forever flavor", ns.clientFlavor() == "forever")
+end
+do -- a missing toc-version API falls back to retail, never an error
+  local w = newWorld()
+  local ns = loadAddon(w)
+  w.env.C_AddOns = nil
+  check("missing flavor api reads retail", ns.clientFlavor() == "retail")
+end
+do -- a missing send call declines the hook and skips the panel, never errors
+  local w = newWorld()
+  w.withSettings = true
+  local ns = loadAddon(w)
+  w.env.C_ChatInfo = nil
+  check("hook declines without send", ns.speak.HookSend() == false)
+  w.env.VocSpeakDB = {}
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
+  check("panel skips without send", ns.settingsBuilt == false)
+end
+do -- a missing Settings stack skips the panel, retried at login
+  local w = newWorld()
+  local ns = loadAddon(w)
+  w.env.VocSpeakDB = {}
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
+  check("load without settings skips", ns.settingsBuilt == false)
+  w.withSettings = true
+  w.env.Settings = {
+    RegisterVerticalLayoutCategory = function(n)
+      w.settingsCat = n
+      return {
+        GetID = function()
+          return 42
+        end,
+      }
+    end,
+    RegisterAddOnCategory = function() end,
+    RegisterAddOnSetting = function(_, var, key, tbl, typ, label, default)
+      local s = {}
+      s.SetValueChangedCallback = function(_, fn)
+        w.settingCallbacks[var] = fn
+      end
+      return s
+    end,
+    CreateCheckbox = function() end,
+    OpenToCategory = function() end,
+  }
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_LOGIN")
+  check("login builds settings", ns.settingsBuilt == true and w.settingsCat == "VocSpeak")
+end
+
+-- 19. Game data not loaded yet: nil reads fail open, retries fill in
+do -- UnitRace returning nil keeps the default, never errors
+  local w = newWorld()
+  w.raceName, w.raceFile = nil, nil
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("nil race keeps dwarven", ns.opts().dialect == "dwarf")
+end
+do -- a failing UnitRace keeps the default, never errors
+  local w = newWorld()
+  w.raceErrors = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("erroring race keeps dwarven", ns.opts().dialect == "dwarf")
+end
+do -- a nil GUID never counts as a switch and never wipes settings
+  local w = newWorld()
+  w.guid = nil
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  ns.opts().dialect = "troll"
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
+  check("nil guid keeps the choice", ns.opts().dialect == "troll")
+end
+do -- the send call appearing late still hooks at entering world
+  local w = newWorld()
+  local ns = loadAddon(w)
+  w.env.C_ChatInfo = nil
+  w.env.VocSpeakDB = {}
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
+  check("load without send skips hook", ns.speak.IsAvailable() == false)
+  w.env.C_ChatInfo = { SendChatMessage = w.originalSend }
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
+  check("entering world hooks late send", w.env.C_ChatInfo.SendChatMessage == ns.speak.SendChatMessage)
+end
+
+-- 20. Secret values (Midnight): refused reads fail open, never error
+do -- the guard itself: refused reads true, the rest false
+  local w = newWorld()
+  w.secretStamps[4242] = true
+  local ns = loadAddon(w)
+  check("secret reads true", ns.isSecret(4242) == true)
+  check("plain reads false", ns.isSecret(5) == false)
+end
+do -- without the guard every read stays plain, never an error
+  local w = newWorld()
+  w.secretGuard = false
+  w.secretStamps[99] = true
+  local ns = loadAddon(w)
+  check("no guard stays plain", ns.isSecret(99) == false)
+end
+do -- a refused message crosses untouched, never mangled, never an error
+  local w = newWorld()
+  w.secretStamps["hello"] = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  stubRandom(ns.speak)
+  check("secret message passes through", ns.speak.MangleForSend("hello", "SAY") == "hello")
+  check("secret engine input passes through", ns.speak.Mangle("hello", ns.speak.DICTIONARIES.dwarf, 10) == "hello")
+end
+do -- a refused chat type never errors and never mangles
+  local w = newWorld()
+  w.secretStamps["SAY"] = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  stubRandom(ns.speak)
+  check("secret type passes through", ns.speak.MangleForSend("hello", "SAY") == "hello")
+end
+do -- a refused race return reads as no voice, never an error
+  local w = newWorld()
+  w.raceName, w.raceFile = "Troll", "Troll"
+  w.secretStamps["Troll"] = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("secret race maps to nil", ns.speak.DialectForRace("Troll") == nil)
+  ns.opts().dialect = "dwarf"
+  check("secret race keeps the default", ns.speak.ApplyRaceDefault() == nil and ns.opts().dialect == "dwarf")
+end
+do -- a refused slash argument prints help instead of acting
+  local w = newWorld()
+  w.secretStamps["troll"] = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  local before = ns.opts().dialect
+  w.env.SlashCmdList.VOCSPEAK("troll")
+  check("secret slash keeps the dialect", ns.opts().dialect == before)
+end
+
+-- 21. Combat: nothing forbidden, recovery clean after
+do -- compartment clicks no-op in combat, work again after
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  local shown = ns.opts().enabled
+  local sounds = #w.sounds
+  w.inCombat = true
+  w.env.VocSpeak_CompartmentClick()
+  check("combat click keeps the filter", ns.opts().enabled == shown)
+  check("combat click stays silent", #w.sounds == sounds)
+  w.inCombat = false
+  w.env.VocSpeak_CompartmentClick()
+  check("regen click toggles", ns.opts().enabled == not shown)
+end
+do -- the panel open in combat names the way back, never calls Settings
+  local w = newWorld()
+  w.withSettings = true
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  w.inCombat = true
+  local opened = w.openedCategory
+  ns.openConfig()
+  check("combat config skips the panel", (w.openedCategory or nil) == opened)
+  check("combat config names the way back", w.printed[#w.printed]:find("open Settings", 1, true) ~= nil)
+  w.inCombat = false
+  ns.openConfig()
+  check("regen config opens the panel", w.openedCategory == 42)
+end
+do -- slash toggles still apply in combat (Lua state only, no protected frame)
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  w.inCombat = true
+  w.env.SlashCmdList.VOCSPEAK("")
+  check("combat slash flips", ns.opts().enabled == false)
+  w.env.SlashCmdList.VOCSPEAK("")
+  check("combat slash flips back", ns.opts().enabled == true)
+  w.inCombat = false
+  w.env.SlashCmdList.VOCSPEAK("troll")
+  check("regen slash works", ns.opts().dialect == "troll")
+end
+
+-- 22. Login, reload, logout, and saved data: nothing lost, nothing invented
+do -- another addon's load never touches our settings
+  local w = newWorld()
+  local ns = loadAddon(w)
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "SomeOtherAddon")
+  check("wrong addon ignored", ns.settingsBuilt == false)
+end
+do -- a missing SavedVariables table starts clean, never errors
+  local w = newWorld()
+  w.withSettings = true
+  local ns = loadAddon(w)
+  w.env.VocSpeakDB = nil
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
+  check("nil db starts clean", type(ns.db) == "table" and ns.db.enabled == true)
+  check("nil db builds settings", ns.settingsBuilt == true)
+end
+do -- the restore replaces the file-top table instead of merging into it
+  local w = newWorld()
+  local ns = loadAddon(w)
+  ns.db.enabled = false
+  w.env.VocSpeakDB = { dialect = "troll" }
+  w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
+  check("restore replaces file-top", ns.db.dialect == "troll" and ns.db.enabled == true)
+end
+do -- unknown keys ride along for forward compatibility
+  local w = newWorld()
+  w.savedVars = { enabled = false, futureKey = 7 }
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("unknown keys preserved", ns.db.futureKey == 7 and ns.db.enabled == false)
+end
+do -- an old partial profile fills the rest with defaults
+  local w = newWorld()
+  w.savedVars = { chance = 3 }
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("old profile keeps saved", ns.db.chance == 3)
+  check(
+    "old profile fills defaults",
+    ns.db.enabled == true and ns.db.say == true and ns.db.yell == true and ns.db.dialect == "dwarf"
+  )
+end
+do -- corrupt types reset to defaults instead of misbehaving
+  local w = newWorld()
+  w.savedVars = { enabled = "yes", dialect = 42, chance = "loud", say = 1, yell = 0 }
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check(
+    "corrupt db resets",
+    ns.db.enabled == true
+      and ns.db.dialect == "dwarf"
+      and ns.db.chance == 8
+      and ns.db.say == true
+      and ns.db.yell == true
+  )
+end
+do -- a reload restores the saved filter instead of inventing one
+  local w = newWorld()
+  w.raceName, w.raceFile = "Troll", "Troll"
+  w.savedVars = { enabled = false, dialect = "troll", chance = 3, say = false, yell = true }
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check(
+    "reload restores the filter",
+    ns.opts().enabled == false
+      and ns.opts().dialect == "troll"
+      and ns.opts().chance == 3
+      and ns.opts().say == false
+      and ns.opts().yell == true
+  )
+end
+
+-- 23. Character, zone, and group: switches restore, travel keeps, noise ignored
+do -- a zone load on the same character keeps the player's choice
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  ns.opts().dialect = "troll"
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
+  check("zone keeps the choice", ns.opts().dialect == "troll" and ns.opts().enabled == true)
+end
+do -- a character switch restores the racial voice
+  local w = newWorld()
+  w.raceName, w.raceFile = "Dwarf", "Dwarf"
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  ns.opts().dialect = "troll"
+  w.guid = "Player-11-0002"
+  w.raceName, w.raceFile = "Troll", "Troll"
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
+  check("character switch restores troll", ns.opts().dialect == "troll")
+  w.guid = "Player-11-0003"
+  w.raceName, w.raceFile = "Dwarf", "Dwarf"
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
+  check("character switch restores dwarven", ns.opts().dialect == "dwarf")
+end
+do -- group chatter is not a reset and never errors
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  ns.opts().dialect = "troll"
+  w.frame.scripts.OnEvent(w.frame, "GROUP_ROSTER_UPDATE")
+  check("group noise keeps the choice", ns.opts().dialect == "troll")
+  check("group noise keeps the hook", w.env.C_ChatInfo.SendChatMessage == ns.speak.SendChatMessage)
+end
+do -- spec and zone events never touch the filter
+  local w = newWorld()
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  ns.opts().enabled = false
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_SPECIALIZATION_CHANGED")
+  w.frame.scripts.OnEvent(w.frame, "ZONE_CHANGED_NEW_AREA")
+  check("spec and zone noise keeps state", ns.opts().enabled == false)
+end
+
+print(string.format("tests/run.lua: %d checks passed", passed))

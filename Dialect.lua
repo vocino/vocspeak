@@ -71,6 +71,10 @@ function speak.Decide(replacement, chance)
   if type(replacement) ~= "string" then
     return nil
   end
+  -- A refused (secret) replacement never applies, never errors.
+  if ns.isSecret ~= nil and ns.isSecret(replacement) then
+    return nil
+  end
   if chance < 10 and replacement:sub(-1) == speak.FLAVOR_MARK and speak.random(100) > chance * 10 then
     return nil
   end
@@ -107,6 +111,11 @@ end
 -- follows an apostrophe ending, so "'e ol'" never doubles up.
 function speak.Mangle(text, dict, chance)
   if type(text) ~= "string" or type(dict) ~= "table" then
+    return text
+  end
+  -- Secret input (Midnight) fails open to the untouched line: no
+  -- compare, match, or arithmetic ever touches a refused value.
+  if ns.isSecret ~= nil and ns.isSecret(text) then
     return text
   end
   local sheltered = {}
