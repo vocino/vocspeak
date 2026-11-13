@@ -535,7 +535,7 @@ do
   check("settings build once", w.settingsCat == built)
 end
 
--- 13. Boot and compartment: login fills defaults and hooks, clicks toggle
+-- 13. Boot: login fills defaults and hooks, no compartment entry points
 do
   local w = newWorld()
   local ns = loadAddon(w)
@@ -547,12 +547,12 @@ do
   w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
   check("login fills the defaults", ns.opts().enabled == true and ns.opts().dialect == "dwarf")
   check("login installs the wrapper", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
-  w.env.VocSpeak_CompartmentClick()
-  check("compartment click toggles off", ns.opts().enabled == false)
-  w.env.VocSpeak_CompartmentClick()
-  check("compartment click toggles on", ns.opts().enabled == true)
-  check("tooltip enter without a tooltip stays silent", pcall(w.env.VocSpeak_CompartmentEnter) == true)
-  check("tooltip leave without a tooltip stays silent", pcall(w.env.VocSpeak_CompartmentLeave) == true)
+  check(
+    "no compartment entry points",
+    w.env.VocSpeak_CompartmentClick == nil
+      and w.env.VocSpeak_CompartmentEnter == nil
+      and w.env.VocSpeak_CompartmentLeave == nil
+  )
 end
 
 -- 14. Engine: rebuilt voice vectors (chance 10, first variant)
@@ -806,20 +806,6 @@ do -- a refused slash argument prints help instead of acting
 end
 
 -- 21. Combat: nothing forbidden, recovery clean after
-do -- compartment clicks no-op in combat, work again after
-  local w = newWorld()
-  local ns = loadAddon(w)
-  clientLoaded(w)
-  local shown = ns.opts().enabled
-  local sounds = #w.sounds
-  w.inCombat = true
-  w.env.VocSpeak_CompartmentClick()
-  check("combat click keeps the filter", ns.opts().enabled == shown)
-  check("combat click stays silent", #w.sounds == sounds)
-  w.inCombat = false
-  w.env.VocSpeak_CompartmentClick()
-  check("regen click toggles", ns.opts().enabled == not shown)
-end
 do -- the panel open in combat names the way back, never calls Settings
   local w = newWorld()
   w.withSettings = true

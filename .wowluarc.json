@@ -15,7 +15,6 @@
       "C_ChatInfo",
       "CreateFrame",
       "CreateSettingsListSectionHeaderInitializer",
-      "GameTooltip",
       "InCombatLockdown",
       "PlaySound",
       "SOUNDKIT",
@@ -29,10 +28,7 @@
       "VocSpeakDB",
       "SLASH_VOCSPEAK1",
       "SLASH_VOCSPEAK2",
-      "SlashCmdList",
-      "VocSpeak_CompartmentClick",
-      "VocSpeak_CompartmentEnter",
-      "VocSpeak_CompartmentLeave"
+      "SlashCmdList"
     ]
   }
 }

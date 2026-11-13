@@ -6,9 +6,6 @@
 ## Category: Roleplay
 ## IconTexture: Interface\Icons\INV_Misc_Book_06
 ## SavedVariables: VocSpeakDB
-## AddonCompartmentFunc: VocSpeak_CompartmentClick
-## AddonCompartmentFuncOnEnter: VocSpeak_CompartmentEnter
-## AddonCompartmentFuncOnLeave: VocSpeak_CompartmentLeave
 ## X-Website: https://github.com/vocino/vocspeak
 ## X-License: MIT
 

@@ -35,7 +35,7 @@ dialect, the chance slider, and the channel checkboxes.
 
 ## Status
 
-The headless suite (`lua tests/run.lua`, 162 checks) pins the engine,
+The headless suite (`lua tests/run.lua`, 156 checks) pins the engine,
 the gate, the hook, the slash, the panel, and the robustness contract:
 Forever + Midnight flavor reads, data-not-loaded retries, secret
 fail-open, combat no-op and recovery, login/reload/saved-data,
@@ -43,5 +43,12 @@ character/zone/group handling. `luacheck .` and `stylua --check .`
 pass.
 
 ---
+
+Part of the Voc family: tiny addons that do one job.
+[VocWarbank](https://github.com/vocino/vocwarbank) ·
+[VocGear](https://github.com/vocino/vocgear) ·
+[VocXP](https://github.com/vocino/vocxp) ·
+[VocVendor](https://github.com/vocino/vocvendor) ·
+[VocSpeak](https://github.com/vocino/vocspeak)
 
 Built for Forever and Midnight, for one player, by vocino.

@@ -16,7 +16,6 @@ globals = {
   "VocSpeakDB",
   "SLASH_VOCSPEAK1", "SLASH_VOCSPEAK2",
   "SlashCmdList",
-  "VocSpeak_CompartmentClick", "VocSpeak_CompartmentEnter", "VocSpeak_CompartmentLeave",
 }
 
 -- WoW API and UI globals read by the addon. Every entry is
@@ -26,8 +25,7 @@ read_globals = {
   "C_ChatInfo", -- SendChatMessage: the send wrapper (live + forever)
   "CreateFrame",
   "CreateSettingsListSectionHeaderInitializer",
-  "GameTooltip",
-  "InCombatLockdown", -- combat gate for clicks and the panel (live + forever)
+  "InCombatLockdown", -- combat gate for the panel (live + forever)
   "PlaySound", "SOUNDKIT",
   "Settings", "SettingsPanel", "UnitGUID", "UnitRace",
   "canaccessvalue", -- secret guard (live + forever)

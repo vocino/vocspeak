@@ -1,0 +1,43 @@
+name: test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install lua 5.1 and luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 lua-check
+
+      - name: headless tests
+        run: lua5.1 tests/run.lua
+
+      - name: lint
+        run: luacheck .
+
+      - name: lint with wowlua-ls
+        run: |
+          curl -sSL -o /tmp/wowlua_ls https://github.com/TradeSkillMaster/wowlua-ls/releases/download/v0.35.0/wowlua_ls-x86_64-unknown-linux-gnu
+          chmod +x /tmp/wowlua_ls
+          /tmp/wowlua_ls check . --severity warning
+
+      - name: skill checks
+        run: |
+          git clone --depth 1 https://github.com/vocino/voc-addons.git /tmp/voc-addons
+          # VocSpeak ships no compartment by design (slash + settings only),
+          # so every check runs except compartment.sh.
+          for check in /tmp/voc-addons/checks/*.sh; do
+            name="$(basename "$check")"
+            case "$name" in
+              run-all.sh|self-test.sh|compartment.sh) continue ;;
+            esac
+            echo "== $name"
+            bash "$check" .
+          done

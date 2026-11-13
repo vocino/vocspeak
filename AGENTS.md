@@ -4,11 +4,13 @@
 
 - `VocSpeak.toc` - retail metadata (Interface 120105)
 - `VocSpeak_Camelot.toc` - the same, for the Forever client (Interface 16001); both list the same Lua files
-- `main.lua` - the addon: saved variables, flavor/secrets/combat guards, send wrapper, settings page, slash, compartment, boot
+- `main.lua` - the addon: saved variables, flavor/secrets/combat guards, send wrapper, settings page, slash, boot (no compartment: slash + settings only, by design)
 - `Dialect.lua` - the dialect engine: pure text in, mangled text out
 - `Dictionaries.lua` - the dwarven and troll tables (MIT, attributed in the file)
 - `tests/run.lua` - stub-harness headless tests (`lua tests/run.lua`): each test builds a fresh stub world, drives the boot frame or slash, and asserts
 - `.reference/api-verification.md` - per-API findings on live + forever (gitignored)
+- Family contract: canonical in the `voc-addons` skill (`family/FAMILY.md`, `family/VERSIONING.md`)
+- `.github`: `test.yml` (tests + lint + skill checks)
 
 ## API references
 
@@ -30,12 +32,23 @@ fails on any other, and a name is added only after confirming it in
 source 1 for both builds. See `.reference/api-verification.md` for
 the finding behind each name.
 
+## Family
+
+VocSpeak is one of the Voc addons. Naming, slash grammar, chat voice,
+sounds, palette, settings, layout, and docs follow the family contract,
+file is canonical in the `voc-addons` skill (`family/FAMILY.md`).
+Debugging follows `FAMILY.md` "Debugging": !BugGrabber +
+BugSack, errors read from `!BugGrabber.lua` after `/reload`.
+Craft follows the `voc-addons` skill, the source of truth for how Voc
+addons look, feel, and behave; load it before UI, settings, tooltip,
+sound, or visual-polish work.
+
 ## Conventions
 
 - Forever + Midnight (retail): the same code runs on both; version-locked behavior degrades silently behind presence gates, and a missing API is never an error.
 - State lives only in `VocSpeakDB`. A fresh install speaks dwarven at chance 8 (troll for troll characters, restored on login and on character switch).
 - Secrets (Midnight): refused values fail open to the untouched line via `ns.isSecret`, never an error and never a mangled secret.
-- Combat: the compartment click no-ops in combat and the panel open names the way back; slash state changes stay allowed and everything works again after.
+- Combat: the panel open names the way back instead of calling Settings; slash state changes stay allowed and everything works again after.
 - Settings are data and apply live; the toggle installs or removes the send wrapper.
 - Before any commit: `lua tests/run.lua`, `luacheck .`, and
   `stylua --check .` all pass.
