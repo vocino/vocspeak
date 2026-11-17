@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: VocSpeak
-## Notes: Rewrites outgoing /say and /yell in a dwarven or troll dialect before they send. (/vs) (Forever client)
+## Notes: Rewrites outgoing /say and /yell in the chosen dialect before they send. (/vs) (Forever client)
 ## Author: vocino
 ## Version: @project-version@
 ## Category: Roleplay

@@ -46,7 +46,7 @@ sound, or visual-polish work.
 ## Conventions
 
 - Forever + Midnight (retail): the same code runs on both; version-locked behavior degrades silently behind presence gates, and a missing API is never an error.
-- State lives only in `VocSpeakDB`. A fresh install speaks dwarven at chance 8 (troll for troll characters, restored on login and on character switch).
+- State lives only in `VocSpeakDB`. A fresh install speaks dwarven at chance 8 (troll for troll characters, none for other races, restored on login and on character switch).
 - Secrets (Midnight): refused values fail open to the untouched line via `ns.isSecret`, never an error and never a mangled secret.
 - Combat: the panel open names the way back instead of calling Settings; slash state changes stay allowed and everything works again after.
 - Settings are data and apply live; the toggle installs or removes the send wrapper.

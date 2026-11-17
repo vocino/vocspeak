@@ -1,11 +1,11 @@
 # VocSpeak
 
 Roleplay speaking for World of Warcraft: Forever and Midnight
-(retail). Outgoing `/say` and `/yell` are rewritten in a dwarven or
-troll dialect before they send, through a wrapper on the documented
-send call (`C_ChatInfo.SendChatMessage`, documented on both
-branches). Emotes never change, and a `((` prefix marks
-out-of-character and stays as typed.
+(retail). Outgoing `/say` and `/yell` are rewritten in the chosen
+dialect (dwarven, troll, or none) before they send, through a
+wrapper on the documented send call (`C_ChatInfo.SendChatMessage`,
+documented on both branches). Emotes never change, and a `((`
+prefix marks out-of-character and stays as typed.
 
 Graduated from VocUI's chat module: the same engine, the same two
 dialect tables (rebuilt in the Ironforge and Darkspear registers
@@ -13,13 +13,14 @@ from the 2007 Dwarvenizer/Trollizer tables, MIT, Carlo Zottmann),
 now standing alone with its own settings page, slash, and saved
 variables. The VocUI module is gone; this addon is where the voice
 lives. State does not migrate: a fresh install speaks dwarven at
-  chance 8 (troll for troll characters, restored on login),
-one slash away from the other or silence.
+  chance 8 (troll for troll characters, none for other races,
+  restored on login and on character switch), one slash away from
+  any of them.
 
 ## Use
 
 - `/vs` turns the dialect filter on or off
-- `/vs dwarf|troll` speaks dwarven or troll
+- `/vs dwarf|troll|none` speaks dwarven, troll, or leaves chat as typed
 - `/vs chance <0-10>` how often the dialect rewrites words
 - `/vs toggle <say|yell>|list` chooses which channels change
 - `/vs config` opens Settings > AddOns > VocSpeak
@@ -35,7 +36,7 @@ dialect, the chance slider, and the channel checkboxes.
 
 ## Status
 
-The headless suite (`lua tests/run.lua`, 156 checks) pins the engine,
+The headless suite (`lua tests/run.lua`, 161 checks) pins the engine,
 the gate, the hook, the slash, the panel, and the robustness contract:
 Forever + Midnight flavor reads, data-not-loaded retries, secret
 fail-open, combat no-op and recovery, login/reload/saved-data,

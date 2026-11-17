@@ -301,6 +301,7 @@ do
       and ns.HELP[#ns.HELP]:find("/vocspeak works too", 1, true) ~= nil
       and ns.HELP[1]:find("/vs ", 1, true) ~= nil
   )
+  check("help names none", ns.HELP[3]:find("none", 1, true) ~= nil)
 end
 
 -- 5. Options: present in panel order
@@ -400,6 +401,8 @@ do
   check("troll speaks", speak.MangleForSend("hello", "SAY") == "'ello")
   o.dialect = "orc"
   check("unknown dialects stay silent", speak.MangleForSend("hello", "SAY") == "hello")
+  o.dialect = "none"
+  check("none stays silent", speak.MangleForSend("hello", "SAY") == "hello")
   o.dialect = "dwarf"
   check("nil sends empty", speak.MangleForSend(nil, "SAY") == "")
   check("junk input crosses untouched", speak.MangleForSend(42, "SAY") == 42)
@@ -451,6 +454,13 @@ do
     ns.opts().dialect == "troll"
       and w.sounds[#w.sounds] == 856
       and w.printed[#w.printed]:find("dialect troll", 1, true) ~= nil
+  )
+  w.env.SlashCmdList.VOCSPEAK("none")
+  check(
+    "slash sets none with sound",
+    ns.opts().dialect == "none"
+      and w.sounds[#w.sounds] == 856
+      and w.printed[#w.printed]:find("dialect none", 1, true) ~= nil
   )
   w.env.SlashCmdList.VOCSPEAK("chance 3")
   check(
@@ -511,15 +521,15 @@ do
   check("panel registers the rows in order", table.concat(keys, ",") == "enabled,dialect,chance,say,yell")
   check(
     "panel leads with the job and the escape hatch",
-    w.headers[1] == "Rewrites outgoing /say and /yell in a dwarven or troll dialect before it sends"
+    w.headers[1] == "Rewrites outgoing /say and /yell in the chosen dialect before it sends"
       and w.headers[2] == "Only /say and /yell change; (( lines and emotes never do"
       and w.headers[3] == "Dialect"
       and w.headers[4] == "Channels"
   )
   local picked = w.dropdownOptions and w.dropdownOptions() or {}
   check(
-    "dialect row offers dwarven and troll",
-    #picked == 2 and picked[1].value == "dwarf" and picked[2].value == "troll"
+    "dialect row offers dwarven, troll, and none",
+    #picked == 3 and picked[1].value == "dwarf" and picked[2].value == "troll" and picked[3].value == "none"
   )
   local enabledCb = w.settingCallbacks["VocSpeak_enabled"]
   check("panel toggle callback exists", type(enabledCb) == "function")
@@ -603,7 +613,10 @@ do
   local speak = ns.speak
   check("dwarf race maps to dwarven", speak.DialectForRace("Dwarf") == "dwarf")
   check("troll race maps to troll", speak.DialectForRace("Troll") == "troll")
-  check("unmapped races keep their voice", speak.DialectForRace("Human") == nil and speak.DialectForRace(nil) == nil)
+  check(
+    "unmapped races map to none",
+    speak.DialectForRace("Human") == "none" and speak.DialectForRace(nil) == nil and speak.DialectForRace("") == nil
+  )
   clientLoaded(w)
   w.raceName, w.raceFile = "Troll", "Troll"
   check("troll login speaks troll", speak.ApplyRaceDefault() == "troll" and ns.opts().dialect == "troll")
@@ -612,7 +625,7 @@ do
   check("dwarf login speaks dwarven", speak.ApplyRaceDefault() == "dwarf" and ns.opts().dialect == "dwarf")
   w.raceName, w.raceFile = "Human", "Human"
   ns.opts().dialect = "troll"
-  check("unmapped races leave the dialect alone", speak.ApplyRaceDefault() == nil and ns.opts().dialect == "troll")
+  check("unmapped races default to none", speak.ApplyRaceDefault() == "none" and ns.opts().dialect == "none")
   w.raceMissing = true
   w.env.UnitRace = nil
   ns.db = {}
@@ -626,6 +639,13 @@ do
   local ns = loadAddon(w)
   clientLoaded(w)
   check("login switches a troll to troll", ns.opts().dialect == "troll")
+end
+do
+  local w = newWorld()
+  w.raceName, w.raceFile = "Human", "Human"
+  local ns = loadAddon(w)
+  clientLoaded(w)
+  check("login switches a human to none", ns.opts().dialect == "none")
 end
 
 -- 17. Troll voice: restrained, lore-grounded conversions
@@ -929,6 +949,10 @@ do -- a character switch restores the racial voice
   w.raceName, w.raceFile = "Dwarf", "Dwarf"
   w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
   check("character switch restores dwarven", ns.opts().dialect == "dwarf")
+  w.guid = "Player-11-0004"
+  w.raceName, w.raceFile = "Human", "Human"
+  w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
+  check("character switch restores none", ns.opts().dialect == "none")
 end
 do -- group chatter is not a reset and never errors
   local w = newWorld()

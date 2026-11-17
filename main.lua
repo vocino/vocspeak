@@ -4,9 +4,9 @@ local name, ns = ...
 -- Outgoing /say and /yell pass through a wrapper on the documented
 -- send call (C_ChatInfo.SendChatMessage, documented identically on
 -- the live and forever branches: the edit box calls it directly),
--- which rewrites the line in a dwarven or troll dialect before it
--- crosses. Emotes never change, and a (( prefix marks
--- out-of-character and stays as typed.
+-- which rewrites the line in the chosen dialect (dwarven, troll,
+-- or none) before it crosses. Emotes never change, and a (( prefix
+-- marks out-of-character and stays as typed.
 
 VocSpeakDB = VocSpeakDB or {}
 ns.db = VocSpeakDB
@@ -93,7 +93,7 @@ ns.COLORS = {
 }
 
 -- Defaults are the product: speaking dwarven at chance 8, the 2007
--- landing state, one slash away from troll or silence. An unknown
+-- landing state, one slash away from troll or none. An unknown
 -- hand-edited dialect reads as silence downstream, never an error.
 ns.defaults = {
   enabled = true,
@@ -146,6 +146,7 @@ speak.OPTIONS = {
     choices = {
       { value = "dwarf", label = "Dwarven", tooltip = "Rewrite outgoing chat like a dwarf" },
       { value = "troll", label = "Troll", tooltip = "Rewrite outgoing chat like a troll" },
+      { value = "none", label = "None", tooltip = "Leave outgoing chat as typed" },
     },
   },
   {
@@ -182,8 +183,9 @@ function speak.IsAvailable()
   return type(C_ChatInfo) == "table" and type(C_ChatInfo.SendChatMessage) == "function"
 end
 
--- Whether one outgoing message changes. The toggle, a known dialect,
--- and a nonzero chance gate everything; emotes never change. Only
+-- Whether one outgoing message changes. The toggle, a rewriting
+-- dialect (dwarf or troll), and a nonzero chance gate everything;
+-- none and unknown dialects stay silent. Emotes never change. Only
 -- /say and /yell reach the engine; every other type passes through
 -- untouched. A (( prefix marks out-of-character and stays as typed.
 function speak.MangleForSend(message, chatType, target)
@@ -321,7 +323,7 @@ end
 function speak.SetDialect(dialect)
   ns.opts().dialect = dialect
   ns.play("on")
-  local line = "dialect " .. (dialect == "dwarf" and "dwarven" or "troll")
+  local line = "dialect " .. (dialect == "dwarf" and "dwarven" or dialect)
   if (ns.opts().chance or 0) <= 0 then
     line = line .. ", chance 0 stays silent"
   end
@@ -329,24 +331,26 @@ function speak.SetDialect(dialect)
 end
 
 -- Racial voices: the dialect follows the player's race. Troll and
--- dwarf characters speak their own voice; every other race keeps the
--- stored dialect, and a missing race API changes nothing (headless).
+-- dwarf characters speak their own voice; every other race defaults
+-- to none, and a missing race API changes nothing (headless).
 speak.RACE_DIALECTS = {
   dwarf = "dwarf",
   troll = "troll",
 }
 
--- Pure mapping from a UnitRace return to a dialect, or nil when the
--- race has no voice of its own. Matches either return (localized or
--- english) case-insensitively, so any client locale still lands.
+-- Pure mapping from a UnitRace return to a dialect. Races with no
+-- voice of their own map to none; a missing return (nil, empty, or
+-- secret) maps to nil so data-not-loaded never counts as a race.
+-- Matches either return (localized or english) case-insensitively,
+-- so any client locale still lands.
 function speak.DialectForRace(race)
-  if type(race) ~= "string" then
+  if type(race) ~= "string" or race == "" then
     return nil
   end
   if ns.isSecret(race) then
     return nil
   end
-  return speak.RACE_DIALECTS[race:lower()]
+  return speak.RACE_DIALECTS[race:lower()] or "none"
 end
 
 -- Restore the racial voice on login. The english return is the
@@ -362,7 +366,7 @@ function speak.ApplyRaceDefault()
     return nil
   end
   -- Data not loaded yet reads nil; a refused (secret) return reads
-  -- as no voice, never an error.
+  -- as missing, never an error and never a race.
   if ns.isSecret(raceName) then
     raceName = nil
   end
@@ -428,7 +432,7 @@ function ns.ensureSettings()
       end)
     end
   end
-  note("Rewrites outgoing /say and /yell in a dwarven or troll dialect before it sends")
+  note("Rewrites outgoing /say and /yell in the chosen dialect before it sends")
   note("Only /say and /yell change; (( lines and emotes never do")
   local state = ns.opts()
   local parentInit = nil
@@ -525,7 +529,7 @@ end
 ns.HELP = {
   "/vs                   turn the dialect filter on or off",
   "/vs on|off            turn the dialect filter on or off",
-  "/vs dwarf|troll       speak dwarven or troll",
+  "/vs dwarf|troll|none  speak dwarven, troll, or leave chat as typed",
   "/vs chance <0-10>     how often the dialect rewrites words",
   "/vs toggle <say|yell>|list choose which channels change",
   "/vs config            open Settings > AddOns > VocSpeak",
@@ -557,7 +561,7 @@ SlashCmdList.VOCSPEAK = function(msg)
     speak.SetEnabled(true)
   elseif cmd == "off" then
     speak.SetEnabled(false)
-  elseif cmd == "dwarf" or cmd == "troll" then
+  elseif cmd == "dwarf" or cmd == "troll" or cmd == "none" then
     speak.SetDialect(cmd)
   elseif cmd == "chance" then
     speak.SetChance(arg)
