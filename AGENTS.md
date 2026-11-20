@@ -4,6 +4,7 @@
 
 - `VocSpeak.toc` - retail metadata (Interface 120105)
 - `VocSpeak_Camelot.toc` - the same, for the Forever client (Interface 16001); both list the same Lua files
+- `Compat.lua` - flavor home: `IS_RETAIL`, `IS_FOREVER`, `FLAVOR`, then capability helpers; nothing detects flavor elsewhere
 - `main.lua` - the addon: saved variables, flavor/secrets/combat guards, send wrapper, settings page, slash, boot (no compartment: slash + settings only, by design)
 - `Dialect.lua` - the dialect engine: pure text in, mangled text out
 - `Dictionaries.lua` - the dwarven and troll tables (MIT, attributed in the file)

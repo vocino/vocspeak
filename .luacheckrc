@@ -21,13 +21,15 @@ globals = {
 -- WoW API and UI globals read by the addon. Every entry is
 -- presence-gated at the call site; a missing API is never an error.
 read_globals = {
-  "C_AddOns", -- GetAddOnInterfaceVersion: own-toc flavor check (live + forever)
+  "C_AddOns", -- GetAddOnInterfaceVersion: own-toc flavor fallback in Compat.lua (live + forever)
   "C_ChatInfo", -- SendChatMessage: the send wrapper (live + forever)
   "CreateFrame",
   "CreateSettingsListSectionHeaderInitializer",
+  "GetBuildInfo", -- Interface fallback in Compat.lua, never for version sniffing
   "InCombatLockdown", -- combat gate for the panel (live + forever)
   "PlaySound", "SOUNDKIT",
   "Settings", "SettingsPanel", "UnitGUID", "UnitRace",
+  "WOW_PROJECT_CAMELOT", "WOW_PROJECT_ID", "WOW_PROJECT_MAINLINE", -- flavor identity, read only in Compat.lua
   "canaccessvalue", -- secret guard (live + forever)
 }
 

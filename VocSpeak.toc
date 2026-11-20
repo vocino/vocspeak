@@ -9,6 +9,7 @@
 ## X-Website: https://github.com/vocino/vocspeak
 ## X-License: MIT
 
+Compat.lua
 main.lua
 Dialect.lua
 Dictionaries.lua

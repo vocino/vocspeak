@@ -11,23 +11,11 @@ local name, ns = ...
 VocSpeakDB = VocSpeakDB or {}
 ns.db = VocSpeakDB
 
--- Client flavor. The client loads exactly one of our tocs (the 1.x
--- VocSpeak_Camelot.toc on Forever, the 12.x VocSpeak.toc on
--- retail), so reading our own loaded Interface version back is
--- literally asking what we're loaded into. Below 20000 is our
--- classic-lineage toc; anything else keeps retail behavior, which is
--- today's behavior everywhere, including flavors we ship no toc for
--- (those clients fall back to the plain toc). A missing API falls
--- back to retail, never an error. C_AddOns.GetAddOnInterfaceVersion
--- is documented on the live and forever branches.
+-- Client flavor lives in Compat.lua (ns.FLAVOR, set at load from
+-- WOW_PROJECT_ID with GetBuildInfo and own-toc fallbacks). This stays
+-- as the one-line reader so existing callers keep working.
 function ns.clientFlavor()
-  if type(C_AddOns) == "table" and type(C_AddOns.GetAddOnInterfaceVersion) == "function" then
-    local ok, v = pcall(C_AddOns.GetAddOnInterfaceVersion, name)
-    if ok and type(v) == "number" and v < 20000 then
-      return "forever"
-    end
-  end
-  return "retail"
+  return ns.FLAVOR
 end
 
 -- Secret values (Midnight): a refused read errors on compare and

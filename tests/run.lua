@@ -5,10 +5,11 @@
 -- Convention (from VocXP): each test builds a fresh stub world, drives
 -- the boot frame's OnEvent scripts or the slash handler, and asserts.
 -- Any failed assert aborts with the test name. The addon files load in
--- toc order (main.lua, Dialect.lua, Dictionaries.lua) into an isolated
--- env per test, so no state leaks between tests.
+-- toc order (Compat.lua, main.lua, Dialect.lua, Dictionaries.lua) into
+-- an isolated env per test, so no state leaks between tests.
 
 local testDir = debug.getinfo(1, "S").source:gsub("\\", "/"):match("@?(.*/)") or ""
+local compatPath = testDir .. "../Compat.lua"
 local mainPath = testDir .. "../main.lua"
 local dialectPath = testDir .. "../Dialect.lua"
 local dictsPath = testDir .. "../Dictionaries.lua"
@@ -76,6 +77,14 @@ local function loadAddon(w)
       return w.addonInterfaceVersion
     end,
   }
+  g.WOW_PROJECT_ID = w.projectId
+  g.WOW_PROJECT_MAINLINE = w.projectMainline
+  g.WOW_PROJECT_CAMELOT = w.projectCamelot
+  if w.buildInterface ~= nil then
+    g.GetBuildInfo = function()
+      return "test", "test", "test", w.buildInterface
+    end
+  end
   if w.raceMissing then
     g.UnitRace = nil
   else
@@ -217,6 +226,7 @@ local function loadAddon(w)
     return chunk
   end
   local ns = {}
+  loadInto(compatPath)("VocSpeak", ns)
   loadInto(mainPath)("VocSpeak", ns)
   loadInto(dialectPath)("VocSpeak", ns)
   loadInto(dictsPath)("VocSpeak", ns)
@@ -695,6 +705,29 @@ do -- a missing toc-version API falls back to retail, never an error
   local ns = loadAddon(w)
   w.env.C_AddOns = nil
   check("missing flavor api reads retail", ns.clientFlavor() == "retail")
+end
+do -- project identity wins over the toc version
+  local w = newWorld()
+  w.addonInterfaceVersion = 120105
+  w.projectId, w.projectMainline, w.projectCamelot = 18, 1, 18
+  local ns = loadAddon(w)
+  check("project camelot reads forever", ns.FLAVOR == "forever" and ns.clientFlavor() == "forever")
+end
+do -- project mainline reads retail even when the toc says forever
+  local w = newWorld()
+  w.addonInterfaceVersion = 16001
+  w.projectId, w.projectMainline, w.projectCamelot = 1, 1, 18
+  local ns = loadAddon(w)
+  check("project mainline reads retail", ns.FLAVOR == "retail" and ns.clientFlavor() == "retail")
+end
+do -- the build interface is the last resort before retail
+  local w = newWorld()
+  local ns = loadAddon(w)
+  check("no identity reads retail", ns.clientFlavor() == "retail")
+  local wb = newWorld()
+  wb.buildInterface = 16001
+  local nb = loadAddon(wb)
+  check("build interface reads forever", nb.FLAVOR == "forever" and nb.clientFlavor() == "forever")
 end
 do -- a missing send call declines the hook and skips the panel, never errors
   local w = newWorld()

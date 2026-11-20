@@ -36,7 +36,7 @@ dialect, the chance slider, and the channel checkboxes.
 
 ## Status
 
-The headless suite (`lua tests/run.lua`, 161 checks) pins the engine,
+The headless suite (`lua tests/run.lua`, 165 checks) pins the engine,
 the gate, the hook, the slash, the panel, and the robustness contract:
 Forever + Midnight flavor reads, data-not-loaded retries, secret
 fail-open, combat no-op and recovery, login/reload/saved-data,
