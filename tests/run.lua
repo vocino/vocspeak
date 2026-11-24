@@ -43,7 +43,7 @@ local function newWorld()
     sounds = {},
     frames = {},
     savedVars = nil,
-    chatSent = {},
+    presend = nil,
     gametip = { lines = {} },
   }
 end
@@ -105,11 +105,26 @@ local function loadAddon(w)
       return w.guid
     end
   end
-  local originalSend = function(message, chatType, languageID, target)
-    w.chatSent = { message = message, chatType = chatType, languageID = languageID, target = target }
+  -- EventRegistry stub: captures our pre-send subscription the way the
+  -- client would, and fires it on demand like TriggerEvent dispatch
+  -- (callback invoked as func(owner, editBox)).
+  local registry = {}
+  function registry.RegisterCallback(_, event, func, owner)
+    w.presend = { event = event, func = func, owner = owner }
+    return owner
   end
-  g.C_ChatInfo = { SendChatMessage = originalSend }
-  w.originalSend = originalSend
+  function registry.UnregisterCallback(_, event, owner)
+    if w.presend and w.presend.event == event and w.presend.owner == owner then
+      w.presend = nil
+    end
+  end
+  g.EventRegistry = registry
+  w.eventRegistry = registry
+  w.FirePreSend = function(box)
+    if w.presend then
+      w.presend.func(w.presend.owner, box)
+    end
+  end
   g.PlaySound = function(id)
     w.sounds[#w.sounds + 1] = id
   end
@@ -257,6 +272,24 @@ local function stubRandom(speak)
     end
     return 1
   end
+end
+
+-- Stub edit box: the client parses the line, then the pre-send event
+-- hands the box to our callback, then the box sends. Language and
+-- target ride on the box, untouched by the edit.
+local function newEditBox(chatType, text)
+  local box = { chatType = chatType, text = text, sets = 0, languageID = 7, target = "Somebody" }
+  function box.GetChatType(self)
+    return self.chatType
+  end
+  function box.GetText(self)
+    return self.text
+  end
+  function box.SetText(self, t)
+    self.text = t
+    self.sets = self.sets + 1
+  end
+  return box
 end
 
 -- 1. Chat voice: the colored prefix carries the addon name, no trailing period
@@ -418,36 +451,63 @@ do
   check("junk input crosses untouched", speak.MangleForSend(42, "SAY") == 42)
 end
 
--- 10. Hook: the wrapper mangles in place and restores on disable
+-- 10. Pre-send: the box text mangles in place, the send path untouched
 do
   local w = newWorld()
   local ns = loadAddon(w)
   clientLoaded(w)
   local speak = ns.speak
   stubRandom(speak)
-  check("send wrapper installs", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
-  w.env.C_ChatInfo.SendChatMessage("hello", "SAY", 1, nil)
   check(
-    "wrapper mangles and passes args through",
-    w.chatSent.message == "G'day"
-      and w.chatSent.chatType == "SAY"
-      and w.chatSent.languageID == 1
-      and w.chatSent.target == nil
+    "login subscribes to the pre-send event",
+    w.presend ~= nil and w.presend.event == "ChatFrame.OnEditBoxPreSendText"
   )
+  speak.HookSend()
+  local box = newEditBox("SAY", "hello")
+  w.FirePreSend(box)
+  check("say mangles in the box", box.text == "G'day" and box.sets == 1)
+  check("language and target ride along", box.languageID == 7 and box.target == "Somebody")
+  local guild = newEditBox("GUILD", "hello")
+  w.FirePreSend(guild)
+  check("guild stays as typed and untouched", guild.text == "hello" and guild.sets == 0)
+  local yell = newEditBox("YELL", "hello")
+  w.FirePreSend(yell)
+  check("yell mangles in the box", yell.text == "G'day")
+  local whisper = newEditBox("WHISPER", "hello")
+  w.FirePreSend(whisper)
+  check("whisper passes through", whisper.text == "hello" and whisper.sets == 0)
   local brokenGate = speak.MangleForSend
   speak.MangleForSend = function()
     error("boom")
   end
-  w.env.C_ChatInfo.SendChatMessage("hello", "SAY")
-  check("a mangling error fails open", w.chatSent.message == "hello")
+  local box2 = newEditBox("SAY", "hello")
+  w.FirePreSend(box2)
+  check("a mangling error fails open", box2.text == "hello" and box2.sets == 0)
   speak.MangleForSend = brokenGate
+  check("unreadable boxes stay silent", pcall(w.FirePreSend, nil) == true and pcall(w.FirePreSend, {}) == true)
+  local noSet = newEditBox("SAY", "hello")
+  noSet.SetText = nil
+  w.FirePreSend(noSet)
+  check("a box without SetText stays as typed", noSet.text == "hello")
+  local noType = newEditBox("", "hello")
+  w.FirePreSend(noType)
+  check("a box without a type stays as typed", noType.text == "hello" and noType.sets == 0)
+  speak.HookSend()
+  local once = newEditBox("SAY", "hello")
+  w.FirePreSend(once)
+  check("a double hook still edits once", once.text == "G'day" and once.sets == 1)
   speak.SetEnabled(false)
-  check("disable restores the saved call", w.env.C_ChatInfo.SendChatMessage == w.originalSend)
+  check("disable removes the subscription", w.presend == nil)
+  local box3 = newEditBox("SAY", "hello")
+  w.FirePreSend(box3)
+  check("a disabled filter leaves the box alone", box3.text == "hello" and box3.sets == 0)
   speak.SetEnabled(true)
-  check("re-enable rewraps", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
-  w.env.C_ChatInfo = nil
-  check("hook declines without the api", speak.HookSend() == false)
-  check("disable without the api stays silent", pcall(speak.ApplyEnabled) == true)
+  check("re-enable resubscribes", w.presend ~= nil)
+  w.FirePreSend(box3)
+  check("a re-enabled filter mangles again", box3.text == "G'day")
+  w.env.EventRegistry = nil
+  check("hook declines without the event", speak.HookSend() == false)
+  check("disable without the event stays silent", pcall(speak.ApplyEnabled) == true)
 end
 
 -- 11. Slash: dialect, chance, and channel subcommands on /vs
@@ -501,12 +561,7 @@ do
   w.env.SlashCmdList.VOCSPEAK("toggle bogus")
   check("unknown channels only print help", ns.opts().say == before and #w.printed >= printedBefore + #ns.HELP)
   w.env.SlashCmdList.VOCSPEAK("")
-  check(
-    "bare slash toggles the filter",
-    ns.opts().enabled == false
-      and w.sounds[#w.sounds] == 857
-      and w.env.C_ChatInfo.SendChatMessage ~= speak.SendChatMessage
-  )
+  check("bare slash toggles the filter", ns.opts().enabled == false and w.sounds[#w.sounds] == 857 and w.presend == nil)
   w.env.SlashCmdList.VOCSPEAK("on")
   check("slash turns the filter on", ns.opts().enabled == true and w.sounds[#w.sounds] == 856)
   printedBefore = #w.printed
@@ -546,10 +601,10 @@ do
   speak.HookSend()
   ns.db.enabled = false
   enabledCb()
-  check("panel toggle removes the wrapper", w.env.C_ChatInfo.SendChatMessage ~= speak.SendChatMessage)
+  check("panel toggle removes the subscription", w.presend == nil)
   ns.db.enabled = true
   enabledCb()
-  check("panel toggle reinstalls the wrapper", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
+  check("panel toggle reinstalls the subscription", w.presend ~= nil)
   local built = w.settingsCat
   w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
   check("settings build once", w.settingsCat == built)
@@ -566,7 +621,7 @@ do
   check("other addons never boot us", ns.db == nil or ns.db.enabled == nil)
   w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
   check("login fills the defaults", ns.opts().enabled == true and ns.opts().dialect == "dwarf")
-  check("login installs the wrapper", w.env.C_ChatInfo.SendChatMessage == speak.SendChatMessage)
+  check("login subscribes to pre-send", w.presend ~= nil and w.presend.event == speak.PRE_SEND_EVENT)
   check(
     "no compartment entry points",
     w.env.VocSpeak_CompartmentClick == nil
@@ -729,12 +784,12 @@ do -- the build interface is the last resort before retail
   local nb = loadAddon(wb)
   check("build interface reads forever", nb.FLAVOR == "forever" and nb.clientFlavor() == "forever")
 end
-do -- a missing send call declines the hook and skips the panel, never errors
+do -- a missing pre-send event declines the hook and skips the panel, never errors
   local w = newWorld()
   w.withSettings = true
   local ns = loadAddon(w)
-  w.env.C_ChatInfo = nil
-  check("hook declines without send", ns.speak.HookSend() == false)
+  w.env.EventRegistry = nil
+  check("hook declines without the event", ns.speak.HookSend() == false)
   w.env.VocSpeakDB = {}
   w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
   check("panel skips without send", ns.settingsBuilt == false)
@@ -794,16 +849,16 @@ do -- a nil GUID never counts as a switch and never wipes settings
   w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
   check("nil guid keeps the choice", ns.opts().dialect == "troll")
 end
-do -- the send call appearing late still hooks at entering world
+do -- the pre-send event appearing late still hooks at entering world
   local w = newWorld()
   local ns = loadAddon(w)
-  w.env.C_ChatInfo = nil
+  w.env.EventRegistry = nil
   w.env.VocSpeakDB = {}
   w.frame.scripts.OnEvent(w.frame, "ADDON_LOADED", "VocSpeak")
-  check("load without send skips hook", ns.speak.IsAvailable() == false)
-  w.env.C_ChatInfo = { SendChatMessage = w.originalSend }
+  check("load without the event skips hook", ns.speak.IsAvailable() == false)
+  w.env.EventRegistry = w.eventRegistry
   w.frame.scripts.OnEvent(w.frame, "PLAYER_ENTERING_WORLD")
-  check("entering world hooks late send", w.env.C_ChatInfo.SendChatMessage == ns.speak.SendChatMessage)
+  check("entering world hooks the late event", w.presend ~= nil and w.presend.event == ns.speak.PRE_SEND_EVENT)
 end
 
 -- 20. Secret values (Midnight): refused reads fail open, never error
@@ -837,6 +892,14 @@ do -- a refused chat type never errors and never mangles
   clientLoaded(w)
   stubRandom(ns.speak)
   check("secret type passes through", ns.speak.MangleForSend("hello", "SAY") == "hello")
+  local box = newEditBox("SAY", "hello")
+  w.FirePreSend(box)
+  check("secret type leaves the box alone", box.text == "hello" and box.sets == 0)
+  w.secretStamps["SAY"] = nil
+  w.secretStamps["hello"] = true
+  local box2 = newEditBox("SAY", "hello")
+  w.FirePreSend(box2)
+  check("secret text leaves the box alone", box2.text == "hello" and box2.sets == 0)
 end
 do -- a refused race return reads as no voice, never an error
   local w = newWorld()
@@ -994,7 +1057,7 @@ do -- group chatter is not a reset and never errors
   ns.opts().dialect = "troll"
   w.frame.scripts.OnEvent(w.frame, "GROUP_ROSTER_UPDATE")
   check("group noise keeps the choice", ns.opts().dialect == "troll")
-  check("group noise keeps the hook", w.env.C_ChatInfo.SendChatMessage == ns.speak.SendChatMessage)
+  check("group noise keeps the subscription", w.presend ~= nil)
 end
 do -- spec and zone events never touch the filter
   local w = newWorld()

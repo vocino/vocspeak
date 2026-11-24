@@ -22,22 +22,15 @@ globals = {
 -- presence-gated at the call site; a missing API is never an error.
 read_globals = {
   "C_AddOns", -- GetAddOnInterfaceVersion: own-toc flavor fallback in Compat.lua (live + forever)
-  "C_ChatInfo", -- SendChatMessage: the send wrapper (live + forever)
   "CreateFrame",
   "CreateSettingsListSectionHeaderInitializer",
+  "EventRegistry", -- ChatFrame.OnEditBoxPreSendText: the pre-send edit (live + forever)
   "GetBuildInfo", -- Interface fallback in Compat.lua, never for version sniffing
   "InCombatLockdown", -- combat gate for the panel (live + forever)
   "PlaySound", "SOUNDKIT",
   "Settings", "SettingsPanel", "UnitGUID", "UnitRace",
   "WOW_PROJECT_CAMELOT", "WOW_PROJECT_ID", "WOW_PROJECT_MAINLINE", -- flavor identity, read only in Compat.lua
   "canaccessvalue", -- secret guard (live + forever)
-}
-
--- The send wrapper writes C_ChatInfo.SendChatMessage; the write is the
--- hook itself, installed only while the filter runs and restored on
--- disable.
-files["main.lua"] = {
-  globals = { "C_ChatInfo" },
 }
 
 -- Tests install stubs onto _G by design.

@@ -43,7 +43,7 @@ end
 
 -- Feature matrix: everything here runs on both clients; a missing API
 -- degrades silently behind a presence gate, never an error.
---   send wrapper .... Shared (C_ChatInfo.SendChatMessage)
+--   pre-send edit ... Shared (ChatFrame.OnEditBoxPreSendText)
 --   race default .... Shared (UnitRace, GUID switch)
 --   settings ........ Shared (native Settings, retried at login)
 --   secrets ......... Shared (canaccessvalue fail-open)

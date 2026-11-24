@@ -1,12 +1,15 @@
 local name, ns = ...
 
 -- VocSpeak: roleplay speaking for Forever and Midnight (retail).
--- Outgoing /say and /yell pass through a wrapper on the documented
--- send call (C_ChatInfo.SendChatMessage, documented identically on
--- the live and forever branches: the edit box calls it directly),
--- which rewrites the line in the chosen dialect (dwarven, troll,
--- or none) before it crosses. Emotes never change, and a (( prefix
--- marks out-of-character and stays as typed.
+-- Outgoing /say and /yell pass through the edit box's pre-send
+-- event (ChatFrame.OnEditBoxPreSendText, fired identically on the
+-- live and forever branches after ParseText and before the
+-- restricted send call), which rewrites the box text in the chosen
+-- dialect (dwarven, troll, or none) before it crosses. Emotes never
+-- change, and a (( prefix marks out-of-character and stays as
+-- typed. Editing the box keeps addon code off the secure send
+-- path, so a restricted send (guild chat in a battleground) never
+-- trips ADDON_ACTION_BLOCKED; replacing the send call itself did.
 
 VocSpeakDB = VocSpeakDB or {}
 ns.db = VocSpeakDB
@@ -112,7 +115,7 @@ local speak = {}
 ns.speak = speak
 
 -- Declarative option rows for the settings page (settings are data).
--- The toggle installs or removes the send wrapper; dialect, chance,
+-- The toggle installs or removes the pre-send subscription; dialect, chance,
 -- and channels read live at send time, so only the toggle needs a
 -- row callback.
 speak.OPTIONS = {
@@ -164,11 +167,13 @@ speak.OPTIONS = {
   },
 }
 
--- Validity predicate. The whole job is one wrapper around the
--- documented send call; without it nothing here can act, so the
--- wrapper is never installed and the panel never builds.
+-- Validity predicate. The whole job is one subscription to the
+-- edit box's pre-send event; without it nothing here can act, so
+-- the callback is never registered and the panel never builds.
 function speak.IsAvailable()
-  return type(C_ChatInfo) == "table" and type(C_ChatInfo.SendChatMessage) == "function"
+  return type(EventRegistry) == "table"
+    and type(EventRegistry.RegisterCallback) == "function"
+    and type(EventRegistry.UnregisterCallback) == "function"
 end
 
 -- Whether one outgoing message changes. The toggle, a rewriting
@@ -217,46 +222,67 @@ function speak.MangleForSend(message, chatType, target)
   return speak.Mangle(message, speak.DICTIONARIES[o.dialect], o.chance)
 end
 
--- The send wrapper: one gate, then the saved call with its original
--- arguments, so types, languages, and targets cross exactly as sent.
--- A mangling error fails open to the untouched line; a message is
--- never swallowed to protect a filter.
-function speak.SendChatMessage(message, chatType, languageID, target)
-  local out = message
-  local ok, mangled = pcall(speak.MangleForSend, message, chatType, target)
-  if ok then
-    out = mangled
+-- The pre-send edit: the edit box's text, rewritten in place. The
+-- box already parsed the line (chat type set, slash stripped), and
+-- the restricted send call runs after this returns, with no addon
+-- code on its stack. A mangling error fails open to the untouched
+-- box; a message is never swallowed to protect a filter. An
+-- unreadable box (missing methods, missing type, non-string or
+-- secret text) stays untouched, never an error.
+speak.PRE_SEND_EVENT = "ChatFrame.OnEditBoxPreSendText"
+
+function speak.PreSendText(_, editBox)
+  if type(editBox) ~= "table" then
+    return
   end
-  return speak.savedSend(out, chatType, languageID, target)
+  if type(editBox.GetChatType) ~= "function" or type(editBox.GetText) ~= "function" then
+    return
+  end
+  if type(editBox.SetText) ~= "function" then
+    return
+  end
+  local okType, chatType = pcall(editBox.GetChatType, editBox)
+  if not okType or type(chatType) ~= "string" or chatType == "" then
+    return
+  end
+  if ns.isSecret(chatType) then
+    return
+  end
+  local okText, text = pcall(editBox.GetText, editBox)
+  if not okText or type(text) ~= "string" then
+    return
+  end
+  if ns.isSecret(text) then
+    return
+  end
+  local ok, mangled = pcall(speak.MangleForSend, text, chatType)
+  if not ok or type(mangled) ~= "string" or mangled == text then
+    return
+  end
+  pcall(editBox.SetText, editBox, mangled)
 end
 
--- Wrap the documented send call. Chain-safe: only one wrapper stands
--- at a time, and removing it restores exactly what was there. A
+-- Subscribe to the pre-send event. Chain-safe: registering with the
+-- same owner replaces our own callback, so only one ever stands. A
 -- missing API declines instead of erroring.
 function speak.HookSend()
-  if type(C_ChatInfo) ~= "table" or type(C_ChatInfo.SendChatMessage) ~= "function" then
+  if not speak.IsAvailable() then
     return false
   end
-  if C_ChatInfo.SendChatMessage == speak.SendChatMessage then
-    return true
-  end
-  speak.savedSend = C_ChatInfo.SendChatMessage
-  C_ChatInfo.SendChatMessage = speak.SendChatMessage
-  return true
+  local ok = pcall(EventRegistry.RegisterCallback, EventRegistry, speak.PRE_SEND_EVENT, speak.PreSendText, speak)
+  return ok == true
 end
 
--- Remove the wrapper, but only while it is still ours: a later
--- wrapper from another addon stays standing, and our saved call
--- simply stops being reached.
+-- Remove the subscription. Only our own owner entry goes; anything
+-- else listening on the event stays standing.
 function speak.UnhookSend()
-  if type(C_ChatInfo) == "table" and C_ChatInfo.SendChatMessage == speak.SendChatMessage then
-    C_ChatInfo.SendChatMessage = speak.savedSend
+  if type(EventRegistry) == "table" and type(EventRegistry.UnregisterCallback) == "function" then
+    pcall(EventRegistry.UnregisterCallback, EventRegistry, speak.PRE_SEND_EVENT, speak)
   end
-  speak.savedSend = nil
 end
 
--- Toggling applies live: the setting installs or removes the send
--- wrapper, so nothing intercepts while off.
+-- Toggling applies live: the setting installs or removes the
+-- pre-send subscription, so nothing intercepts while off.
 function speak.ApplyEnabled()
   if ns.opts().enabled then
     speak.HookSend()
@@ -266,7 +292,7 @@ function speak.ApplyEnabled()
 end
 
 -- Toggle the filter: the setting applies live, the checkbox sound
--- confirms, and the wrapper installs or removes with it.
+-- confirms, and the subscription installs or removes with it.
 function speak.SetEnabled(on)
   ns.opts().enabled = on
   ns.play(on and "on" or "off")
@@ -391,7 +417,7 @@ end
 -- declarative rows rendered through the native controls; the toggle
 -- applies live through its callback, and child rows disable (never
 -- hide) while the filter is off. Built once, after SavedVariables
--- land, and only while the send call exists.
+-- land, and only while the pre-send event exists.
 ns.settingsBuilt = false
 function ns.ensureSettings()
   if ns.settingsBuilt then
@@ -605,8 +631,8 @@ boot:SetScript("OnEvent", function(_, event, addon)
     boot:UnregisterEvent("ADDON_LOADED")
   elseif event == "PLAYER_LOGIN" then
     speak.ApplyRaceDefault()
-    -- Data not loaded yet: the send call or Settings may appear
-    -- after load, so retry both here.
+    -- Data not loaded yet: the pre-send event or Settings may
+    -- appear after load, so retry both here.
     if speak.IsAvailable() then
       speak.ApplyEnabled()
     end

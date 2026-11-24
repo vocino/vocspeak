@@ -2,9 +2,9 @@
 
 Roleplay speaking for World of Warcraft: Forever and Midnight
 (retail). Outgoing `/say` and `/yell` are rewritten in the chosen
-dialect (dwarven, troll, or none) before they send, through a
-wrapper on the documented send call (`C_ChatInfo.SendChatMessage`,
-documented on both branches). Emotes never change, and a `((`
+dialect (dwarven, troll, or none) before they send, through the
+edit box's pre-send event (`ChatFrame.OnEditBoxPreSendText`,
+fired on both branches). Emotes never change, and a `((`
 prefix marks out-of-character and stays as typed.
 
 Graduated from VocUI's chat module: the same engine, the same two
@@ -36,10 +36,10 @@ dialect, the chance slider, and the channel checkboxes.
 
 ## Status
 
-The headless suite (`lua tests/run.lua`, 165 checks) pins the engine,
-the gate, the hook, the slash, the panel, and the robustness contract:
-Forever + Midnight flavor reads, data-not-loaded retries, secret
-fail-open, combat no-op and recovery, login/reload/saved-data,
+The headless suite (`lua tests/run.lua`) pins the engine,
+the gate, the pre-send edit, the slash, the panel, and the robustness
+contract: Forever + Midnight flavor reads, data-not-loaded retries,
+secret fail-open, combat no-op and recovery, login/reload/saved-data,
 character/zone/group handling. `luacheck .` and `stylua --check .`
 pass.
 
